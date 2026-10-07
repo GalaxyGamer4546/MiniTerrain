@@ -1,0 +1,1386 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>MiniTerra</title>
+<style>
+  :root { box-sizing: border-box; padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); }
+  html, body { height: 100%; margin: 0; background: #111; overflow: hidden; font-family: system-ui, sans-serif; }
+  canvas { display: block; width: 100%; height: 100%; }
+  #hotbar { position: fixed; bottom: 10px; left: 50%; transform: translateX(-50%); display: flex; gap: 4px; }
+  .slot { width: 48px; height: 48px; border: 3px solid #555; background: rgba(0,0,0,.55); color: #fff; font-size: 12px;
+          display: flex; align-items: flex-end; justify-content: flex-end; padding: 2px 4px; box-sizing: border-box; position: relative; }
+  .slot.sel { border-color: #ffd54a; }
+  .slot svg { position: absolute; left: 4px; top: 4px; width: 34px; height: 34px; }
+  #name { position: fixed; bottom: 66px; left: 0; right: 0; text-align: center; color: #fff; font-size: 13px; text-shadow: 0 1px 3px #000; pointer-events: none; }
+  .slot b { position: relative; }
+  #help { position: fixed; top: 10px; left: 10px; color: #fff; background: rgba(0,0,0,.5); padding: 8px 10px; border-radius: 8px; font-size: 12px; line-height: 1.5; }
+  #debug { position: fixed; left: 10px; top: 96px; width: 270px; max-height: calc(100% - 170px); overflow-y: auto; background: rgba(0,0,0,.88); color: #fff; font-size: 12px; padding: 10px; border-radius: 8px; display: none; z-index: 5; }
+  #debug h4 { margin: 10px 0 4px; color: #ffd54a; }
+  #debug .drow { margin: 4px 0; }
+  #debug button { margin: 2px 2px 2px 0; padding: 4px 8px; cursor: pointer; }
+  #debug input[type=range] { width: 100%; }
+  .slot em { position: absolute; left: 3px; top: 1px; font-size: 10px; font-style: normal; color: #bbb; }
+  .slot u { position: absolute; left: 4px; bottom: 3px; height: 3px; background: #7ee787; }
+  .slot.pick { border-color: #4fc3f7; }
+  .slot b { text-shadow: 0 1px 2px #000; }
+  #name { bottom: 120px; left: calc(50% - 232px); right: auto; text-align: left; font-size: 12px; line-height: 1.4; }   /* tool info: above the left side of the hotbar */
+  #name b { font-size: 14px; } #name small { color: #ccc; display: block; }
+  #inv { position: fixed; inset: 0; background: rgba(8,10,16,.82); display: none; align-items: center; justify-content: center; z-index: 8; }
+  .invbox { display: flex; flex-wrap: wrap; gap: 24px; background: #2b2f3a; border: 3px solid #555c6e; border-radius: 12px; padding: 18px; color: #fff; max-height: 86vh; max-width: 96vw; box-sizing: border-box; overflow: auto; }
+  .invbox h3 { margin: 0 0 8px; } .invbox small { font-weight: normal; font-size: 12px; }
+  #invgrid { display: grid; grid-template-columns: repeat(9, 48px); gap: 4px; }
+  #invgrid .gap { grid-column: 1 / -1; height: 10px; }
+  #invinfo { margin-top: 10px; font-size: 12px; min-height: 52px; color: #ddd; line-height: 1.5; }
+  .invright { width: min(340px, 86vw); flex: 1 1 300px; overflow-y: auto; max-height: calc(86vh - 40px); }
+  #craft summary { cursor: pointer; font-weight: bold; padding: 5px 8px; background: #3a3f4d; border-radius: 4px; margin-top: 4px; }
+  #craft details details { margin-left: 14px; }
+  .rec { display: flex; align-items: center; gap: 8px; padding: 5px 4px; border-bottom: 1px solid #444; user-select: none; }
+  .rec.can { cursor: pointer; } .rec.can:hover { background: #3f6b4a; } .rec.off { opacity: .7; }
+  .rec .go { color: #7ee787; font-weight: bold; font-size: 12px; min-width: 38px; text-align: right; }
+  .rec .ic { width: 30px; height: 30px; flex: none; } .rec .txt { flex: 1; font-size: 12px; line-height: 1.4; }
+  .rec button { padding: 5px 10px; cursor: pointer; }
+  .have { color: #7ee787; } .lack { color: #ff7b72; } .rec i { color: #ffd54a; font-style: normal; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hotbar"></div>
+<div id="name"></div>
+<div id="inv"><div class="invbox">
+  <div class="invleft"><h3>Inventory</h3><div id="invgrid"></div><div id="invinfo">Click an item, then click another slot to move it.</div></div>
+  <div class="invright"><h3>Crafting <small id="benchstat"></small></h3><div id="craft"></div></div>
+</div></div>
+<div id="help"><b>A/D</b> move &nbsp;<b>W/Space</b> jump &nbsp;<b>Shift</b> sprint<br><b>Hold left-click</b> mine &nbsp;<b>Right-click</b> place<br><b>1-9 / wheel</b> select &nbsp;<b>E</b> inventory &amp; crafting &nbsp;<b>`</b> debug menu</div>
+
+<script>
+/* =====================================================================
+   ★ EDIT THIS SECTION TO CUSTOMIZE THE GAME ★
+   ===================================================================== */
+
+// General settings
+const CONFIG = {
+  tileSize: 28,        // pixels per block on screen
+  loadRadius: 96,      // the world is ENDLESS left and right! This is how far around you it gets generated
+  biomeScale: 0.004,   // biome size: SMALLER number = BIGGER biomes
+  spawnForest: 60,     // the area around the start is always forest (blocks from the start)
+  worldDepth: 500,     // how many blocks deep the world goes below the surface (it is endless sideways)
+  surfaceLevel: 170,   // average ground height. Bigger = more room above ground for sky islands and clouds
+  gravity: 0.03,
+  moveSpeed: 0.15,
+  jumpPower: 0.42,
+  reach: 6,            // how far (in blocks) you can mine/place
+  lineOfSight: true,   // true = you can't mine/place through solid blocks (false = x-ray mining)
+  dayLength: 600,      // real seconds for one full day+night cycle (600 = 10 minutes)
+  dayNightCycle: true, // false = it's always daytime on the surface
+  nightBrightness: 0.3,// how bright the surface is at night (0 = black, 1 = same as day)
+  // --- Health & stamina (values are per frame, 60 frames = 1 second) ---
+  maxHealth: 100,
+  maxHunger: 20,       // hunger points (shown as 10 drumsticks)
+  hungerBase: 0.0025,  // hunger 'exhaustion' gained per frame just from living (4 exhaustion = 1 hunger point)
+  hungerSprint: 0.02,  // extra exhaustion per frame while sprinting
+  hungerMine: 0.1,     // exhaustion per block mined
+  regenHunger: 18,     // you only heal naturally while hunger is at least this high
+  regenExhaust: 0.2,   // healing makes you hungry (exhaustion per health point healed)
+  sprintHunger: 6,     // you can't sprint when hunger is this low or lower
+  starveDamage: 2,     // health lost every 4 seconds when hunger is empty
+  healthRegen: 0.04,   // health regained per frame when not hurt recently (0.04 = ~2.4 per second)
+  regenDelay: 240,     // frames to wait after taking damage before healing starts (240 = 4 sec)
+  safeFall: 7,         // blocks you can fall without taking damage
+  fallDamage: 6,       // damage for every block fallen beyond safeFall
+  maxStamina: 100,
+  sprintSpeed: 1.7,    // speed multiplier while sprinting (hold Shift)
+  sprintDrain: 0.35,   // stamina used per frame while sprinting (0.35 = ~4.7 sec of sprint)
+  staminaRegen: 0.3,   // stamina regained per frame when not sprinting
+  staminaDelay: 30,    // frames to wait after sprinting before stamina refills
+  staminaRecover: 20,  // after running out, you can't sprint again until stamina reaches this
+  benchRange: 6,       // how close (in blocks) you must be to a Crafting Bench to craft tools & weapons
+  fistDamage: 4,       // damage when you punch with no weapon
+  startItems: { dirt: 10, torch: 5, apple: 3 },   // what you start with
+  deepStoneDepth: 45,  // below this many blocks underground, stone turns into darker 'deepstone'
+  oreDepthBoost: 0.02, // ores get this much more common per block of depth (0 = no change)
+  caveSize: 0.62,      // big caverns: LOWER = bigger caves (0.5 = huge, 0.7 = tiny)
+  tunnelWidth: 0.03,   // winding tunnels: higher = wider, 0 = no tunnels
+  // --- Sky, ocean, weather, enemies ---
+  islandChance: 0.75,  // chance that each 100-block-wide slot of world has a floating sky island
+  islandBands: [[28, 50], [55, 95], [100, 140]],  // how far above the ground islands float: low, middle and high bands (min, max blocks)
+  oceanThreshold: 0.62, // higher = fewer oceans
+  oceanDepth: 14,      // how deep the ocean floor gets
+  seaOffset: 4,        // sea level, in blocks below the average ground level
+  weatherMin: 3600, weatherMax: 9000,   // frames each weather lasts (3600 = 1 minute)
+  enemyDepthScale: 300,// enemies get tougher with depth: +100% health per this many blocks
+  oreBoostMax: 4,      // ores never get more than this many times as common as their base chance
+  // --- Water & lava ---
+  lakeChance: 0.6,     // chance that each 48-block-wide section of world gets a lake
+  lakeWidth: [5, 10],  // lake half-width range (blocks)
+  lakeDepth: 4,        // how deep lakes get in the middle
+  poolMinDepth: 12,    // cave pools only appear this far below the surface
+  poolStart: 0.3,      // chance a cave floor gets a pool (higher = more pools)
+  poolContinue: 0.65,  // chance a pool gets another layer (higher = deeper pools)
+  lavaDepth: 100,      // below this depth, cave pools are LAVA instead of water
+  liquidSlow: 0.55,    // movement speed multiplier while in water/lava
+  liquidMineSlow: 0.5, // mining speed multiplier while you're in liquid (0.5 = takes double the time)
+  flowEvery: 6,        // water spreads one block every this many frames (lower = faster)
+  lavaFlowEvery: 2,    // lava flows this many times slower than water (2 = half speed)
+  flowRadius: [60, 40],// liquids only flow this close to you (x, y blocks) to keep the game fast
+  halfFlowBelow: 5,    // flowing liquid with a level below this (water flows 7 down to 1) is drawn as a half block
+  // --- Oxygen ---
+  maxOxygen: 600,      // frames of air while your head is underwater (600 = 10 sec)
+  oxygenRefill: 8,     // oxygen regained per frame when your head is out of the water
+  drownDamage: 0.1,    // health lost per frame once you run out of air
+  // --- Lighting ---
+  darkDepth: 300,      // blocks underground where it reaches maximum darkness
+  depthDarkness: 0.85, // how dark deep areas get (0 = never, 1 = pitch black)
+  minLight: 0.04,      // darkest allowed brightness (0 = totally black caves)
+  playerLight: 8,      // glow radius around you in blocks (0 = no glow)
+  lightAirCost: 0.05,  // how fast daylight fades going through open air/caves
+  lightSolidCost: 0.12,// how fast daylight fades going through solid blocks
+};
+
+// BLOCKS: add a new block by adding a line here!
+//  color    = how it looks
+//  hardness = how long to mine (higher = slower, Infinity = unbreakable)
+//  solid    = can you walk through it? (default true)
+//  drops    = which ITEM you get when you break it
+//  ore      = (optional) generates underground: chance (0-1) and minDepth below the surface
+const BLOCKS = {
+  air:     { color: null, solid: false, hardness: 0 },
+  grass:   { color: '#4caf50', hardness: 20, drops: 'dirt' },
+  dirt:    { color: '#8b5a2b', hardness: 20, drops: 'dirt' },
+  stone:   { color: '#7d7d7d', hardness: 50, drops: 'stone' },
+  deepstone: { color: '#4a4a58', hardness: 80, drops: 'stone' },
+  wood:    { color: '#6d4c2a', hardness: 30, drops: 'wood', solid: false, chop: true },   // tree trunk (walk through)
+  leaves:  { color: '#2e7d32', hardness: 8,  drops: 'apple', dropChance: 0.12, solid: false, chop: true },
+  planks:  { color: '#c8954f', hardness: 30, drops: 'planks', chop: true },   // chop: true = axes mine it faster
+  // Ores: 'chance' = base odds per block, 'minDepth' = blocks below the surface where it starts.
+  // Chance grows with depth (see oreDepthBoost). Rarer ores start deeper.
+  coal:    { color: '#222222', hardness: 60,  drops: 'coal',    ore: { chance: 0.04,  minDepth: 8 } },
+  iron:    { color: '#d9a679', hardness: 90,  drops: 'iron',    ore: { chance: 0.03,  minDepth: 15 } },
+  gold:    { color: '#ffd700', hardness: 120, drops: 'gold',    ore: { chance: 0.015, minDepth: 40 } },
+  diamond: { color: '#40e0ff', hardness: 160, drops: 'diamond', ore: { chance: 0.008, minDepth: 70 } },
+  ruby:    { color: '#ff2255', hardness: 200, drops: 'ruby',    ore: { chance: 0.005, minDepth: 100 } },
+  mythril: { color: '#b266ff', hardness: 280, drops: 'mythril', ore: { chance: 0.003, minDepth: 130 } },
+  // Crafting bench: tools & weapons can only be crafted near one (needsFloor = must sit on the ground)
+  crafting_bench: { color: '#b07a3a', shape: 'bench', solid: false, hardness: 20, drops: 'crafting_bench', needsFloor: true, chop: true },
+  // Biome blocks
+  sand:      { color: '#e6d28a', hardness: 10,  drops: 'sand' },
+  sandstone: { color: '#c9a95f', hardness: 40,  drops: 'sandstone' },
+  snow:      { color: '#f2f7ff', hardness: 10,  drops: 'snow' },
+  ice:       { color: '#9fd8ff', hardness: 30,  drops: 'ice' },
+  fungus:    { color: '#9b59d0', hardness: 25,  drops: 'fungus', emit: 0.3 },     // glows!
+  obsidian:  { color: '#2a1d45', hardness: 220, drops: 'obsidian' },              // made when water touches lava
+  cactus:    { color: '#3f9f4a', solid: false, hardness: 10, drops: null, chop: true },
+  pine:      { color: '#1b5e3b', solid: false, hardness: 8,  drops: null, chop: true },
+  // Sky island blocks
+  skygrass:   { color: '#8fe0a0', hardness: 10, drops: 'dirt' },
+  cloudstone: { color: '#dfe8f5', hardness: 25, drops: 'cloudstone' },
+  crystal:    { color: '#8fe3ff', hardness: 40, drops: 'crystal', emit: 0.45 },          // glows!
+  sunstone:   { color: '#f2d37c', hardness: 45, drops: 'sunstone' },
+  blossom:    { color: '#f6b8d2', solid: false, hardness: 8, drops: null, chop: true },   // cherry-blossom leaves
+  // Liquids: liquid = swimmable, damage = health lost per frame, emit = glows (0-1),
+  //          decay = how quickly it thins out as it flows (1 = flows far, 2 = flows half as far)
+  water:   { color: 'rgba(40,110,230,0.65)', solid: false, liquid: true, hardness: Infinity, decay: 1 },
+  lava:    { color: '#ff5a14', solid: false, liquid: true, hardness: Infinity, damage: 0.6, emit: 0.55, decay: 2 },
+  // Torch: emit = how much light it gives off, needsSupport = must be placed next to a block or wall
+  torch:   { color: '#ffb300', shape: 'torch', solid: false, hardness: 1, drops: 'torch', emit: 0.85, needsSupport: true },
+  bedrock: { color: '#1a1a1a', hardness: Infinity },
+};
+
+// ITEMS: things in your inventory.
+//  block = placing it puts this block in the world
+//  tool  = mining speed multiplier (bigger = faster)
+// (Color is taken from the block automatically, or set it with color:)
+const ITEMS = {
+  dirt:   { block: 'dirt' },
+  stone:  { block: 'stone' },
+  wood:   { block: 'wood' },
+  planks: { block: 'planks' },
+  crafting_bench: { block: 'crafting_bench', icon: 'bench', color: '#b07a3a' },
+  cloudstone: { block: 'cloudstone' }, crystal: { block: 'crystal' }, sunstone: { block: 'sunstone' },
+  sand: { block: 'sand' }, sandstone: { block: 'sandstone' }, snow: { block: 'snow' }, ice: { block: 'ice' },
+  fungus: { block: 'fungus' }, obsidian: { block: 'obsidian' },
+  // Food: food = hunger restored. Hold it and right-click to eat.
+  apple:       { color: '#e53935', icon: 'lump', food: 4 },
+  raw_fish:    { color: '#ff8a65', icon: 'fish', food: 3 },
+  cooked_fish: { color: '#a1887f', icon: 'fish', food: 7 },
+  // Dropped by enemies
+  gel:      { color: '#66bb6a', icon: 'lump' },
+  feather:  { color: '#f3e5f5', icon: 'lump' },
+  jelly:    { color: '#f48fb1', icon: 'gem' },
+  bat_wing: { color: '#9575cd', icon: 'lump' },
+  silk:     { color: '#eeeeee', icon: 'lump' },
+  claw:     { color: '#bcaaa4', icon: 'ingot' },
+  scale:    { color: '#4dd0e1', icon: 'gem' },
+  // durability = how many uses before a tool/weapon breaks
+  // Swords: weapon = { damage, cooldown (frames between swings) }. Hold one and left-click an enemy.
+  wood_sword:     { durability: 40, color: '#c8954f', weapon: { damage: 12, cooldown: 22 } },
+  stone_sword:    { durability: 90, color: '#aaaaaa', weapon: { damage: 18, cooldown: 22 } },
+  iron_sword:     { durability: 180, color: '#e8c4a0', weapon: { damage: 26, cooldown: 20 } },
+  diamond_sword:  { durability: 450, color: '#40e0ff', weapon: { damage: 40, cooldown: 18 } },
+  obsidian_sword: { durability: 700, color: '#5b3a8c', weapon: { damage: 55, cooldown: 18 } },
+  mythril_sword:  { durability: 1100, color: '#b266ff', weapon: { damage: 75, cooldown: 15 } },
+  // Axes: axe = how fast you chop wood/leaves (you only need one in your inventory). They also hit enemies.
+  wood_axe:  { durability: 40, color: '#c8954f', axe: 4,  weapon: { damage: 8,  cooldown: 28 } },
+  stone_axe: { durability: 90, color: '#aaaaaa', axe: 7,  weapon: { damage: 12, cooldown: 28 } },
+  iron_axe:  { durability: 180, color: '#e8c4a0', axe: 10, weapon: { damage: 17, cooldown: 26 } },
+  // heldLight = how far you can see while holding this item (in blocks)
+  torch:  { block: 'torch', color: '#ffb300', icon: 'torch', heldLight: 14 },
+  // icon: 'lump' | 'gem' | 'ingot' for materials (blocks and tools get icons automatically)
+  coal:    { color: '#222222', icon: 'lump' },
+  iron:    { color: '#d9a679', icon: 'ingot' },
+  gold:    { color: '#ffd700', icon: 'ingot' },
+  diamond: { color: '#40e0ff', icon: 'gem' },
+  ruby:    { color: '#ff2255', icon: 'gem' },
+  mythril: { color: '#b266ff', icon: 'gem' },
+  // Pickaxes: 'color' is the head color
+  wood_pickaxe:    { durability: 40, color: '#c8954f', tool: 2 },
+  stone_pickaxe:   { durability: 90, color: '#aaaaaa', tool: 3.5 },
+  iron_pickaxe:    { durability: 180, color: '#e8c4a0', tool: 6 },
+  diamond_pickaxe: { durability: 450, color: '#40e0ff', tool: 9 },
+  ruby_pickaxe:    { durability: 700, color: '#ff2255', tool: 13 },
+  mythril_pickaxe: { durability: 1100, color: '#b266ff', tool: 18 },
+};
+
+// RECIPES: press E in game to craft. cost = what you pay, makes = what you get.
+const RECIPES = [
+  { makes: 'planks',        amount: 4, cost: { wood: 1 } },
+  { makes: 'torch',         amount: 4, cost: { wood: 1, coal: 1 } },
+  { makes: 'crafting_bench', amount: 1, cost: { planks: 6 } },
+  { makes: 'torch',          amount: 8, cost: { wood: 1, gel: 1 } },
+  { makes: 'cooked_fish',    amount: 1, cost: { raw_fish: 1, coal: 1 }, cat: ['Food'] },
+  { makes: 'wood_pickaxe',  amount: 1, cost: { planks: 5 } },
+  { makes: 'stone_pickaxe', amount: 1, cost: { planks: 3, stone: 6 } },
+  { makes: 'iron_pickaxe',  amount: 1, cost: { planks: 3, iron: 6, coal: 2 } },
+  { makes: 'diamond_pickaxe', amount: 1, cost: { planks: 3, diamond: 6, iron: 2 } },
+  { makes: 'ruby_pickaxe',    amount: 1, cost: { planks: 3, ruby: 6, gold: 4 } },
+  { makes: 'mythril_pickaxe', amount: 1, cost: { planks: 3, mythril: 6, diamond: 3 } },
+  { makes: 'wood_sword',     amount: 1, cost: { planks: 6 } },
+  { makes: 'stone_sword',    amount: 1, cost: { planks: 2, stone: 8 } },
+  { makes: 'iron_sword',     amount: 1, cost: { planks: 2, iron: 8, coal: 2 } },
+  { makes: 'diamond_sword',  amount: 1, cost: { planks: 2, diamond: 6 } },
+  { makes: 'obsidian_sword', amount: 1, cost: { planks: 2, obsidian: 6, claw: 2 } },
+  { makes: 'mythril_sword',  amount: 1, cost: { planks: 2, mythril: 6, scale: 3, silk: 2 } },
+  { makes: 'wood_axe',       amount: 1, cost: { planks: 5 } },
+  { makes: 'stone_axe',      amount: 1, cost: { planks: 3, stone: 5 } },
+  { makes: 'iron_axe',       amount: 1, cost: { planks: 3, iron: 5 } },
+  { makes: 'torch',          amount: 6, cost: { wood: 1, bat_wing: 1 } },
+];
+
+// BIOMES (above ground): top / sub = surface blocks, wall = background color of the dirt layer just under the surface.
+const BIOMES = {
+  forest: { name: 'Forest',      top: 'grass', sub: 'dirt', wall: '#4a3119' },
+  desert: { name: 'Desert',      top: 'sand',  sub: 'sand', wall: '#8c7a45' },
+  snow:   { name: 'Snow Tundra', top: 'snow',  sub: 'dirt', wall: '#53483f' },
+  ocean:  { name: 'Ocean',       top: 'sand',  sub: 'sand', wall: '#8c7a45' },
+};
+// SKY ISLAND biomes (different from the ground biomes). top / body / under = the blocks of the island,
+// deco = what decorates it ('blossoms' trees, crystal 'spires', 'pillars'), ore = [block, chance] hidden inside, haze = glow color (r,g,b)
+const SKY_BIOMES = {
+  meadow:  { name: 'Blossom Meadow', top: 'skygrass',   body: 'dirt',      under: 'cloudstone', deco: 'blossoms', ore: ['iron', 0.04],    haze: '255,214,232' },
+  crystal: { name: 'Crystal Isle',   top: 'cloudstone', body: 'cloudstone', under: 'crystal',   deco: 'spires',   ore: ['diamond', 0.03], haze: '190,236,255' },
+  ruins:   { name: 'Sun Ruins',      top: 'sunstone',   body: 'sunstone',  under: 'cloudstone', deco: 'pillars',  ore: ['gold', 0.05],    haze: '255,226,160' },
+};
+// UNDERGROUND biomes: fill = rock block, deep = rock below deepStoneDepth, patch = random extra blocks,
+// wall / deepWall = background (cave wall) colors
+const UNDER = {
+  stone:  { name: 'Stone Caverns',   fill: 'stone',     deep: 'deepstone', wall: '#3b3b3b', deepWall: '#25252f' },
+  ice:    { name: 'Ice Caverns',     fill: 'ice',       deep: 'ice',       wall: '#3d5a72', deepWall: '#2a4258' },        // under the snow
+  sand:   { name: 'Sandstone Caves', fill: 'sandstone', deep: 'sandstone', wall: '#6e5a2e', deepWall: '#4d3f20' },        // under the desert
+  fungal: { name: 'Fungal Grotto',   fill: 'stone',     deep: 'deepstone', patch: 'fungus', wall: '#3a2850', deepWall: '#261a38' },   // glowing mushrooms
+};
+const UNDER_KEYS = Object.keys(UNDER);
+
+// ENEMIES: add your own! ai = 'fly' | 'crawl' (climbs walls) | 'hop' (jumps) | 'dig' (digs through rock) | 'swim' (water only)
+// look = which drawing to use ('fly' 'crawl' 'hop' 'dig' 'swim' 'jelly'), hostile: false = harmless animal
+// minDepth = how far underground it appears (negative = also on the surface). night = also appears on the surface at night.
+// sky = only appears when you're up in the sky. ocean = only in the ocean. drops = item: [min, max]
+const ENEMIES = {
+  bat:       { name: 'Cave Bat',    ai: 'fly',   color: '#7e57c2', w: 0.9, h: 0.6, hp: 20, speed: 0.07,  damage: 8,  minDepth: 8,  night: true, drops: { bat_wing: [0, 2] } },
+  spider:    { name: 'Cave Spider', ai: 'crawl', color: '#4e342e', w: 1.1, h: 0.7, hp: 35, speed: 0.06,  damage: 12, minDepth: 15, drops: { silk: [0, 2] } },
+  digger:    { name: 'Rock Digger', ai: 'dig',   color: '#8d6e63', w: 1,   h: 1,   hp: 70, speed: 0.05,  damage: 18, minDepth: 30, drops: { claw: [1, 2] } },
+  piranha:   { name: 'Piranha',     ai: 'swim',  color: '#26c6da', w: 0.9, h: 0.5, hp: 25, speed: 0.09,  damage: 10, drops: { scale: [0, 2] } },
+  slime:     { name: 'Slime',       ai: 'hop',   color: '#66bb6a', w: 0.9, h: 0.7, hp: 30, speed: 0.05,  damage: 9,  minDepth: -2, drops: { gel: [1, 3] } },
+  harpy:     { name: 'Sky Harpy',   ai: 'fly',   color: '#ce93d8', w: 1.1, h: 0.7, hp: 40, speed: 0.08,  damage: 11, sky: true, drops: { feather: [1, 2] } },
+  jellyfish: { name: 'Jellyfish',   ai: 'swim',  look: 'jelly', color: '#f48fb1', w: 0.8, h: 0.9, hp: 35, speed: 0.035, damage: 14, ocean: true, drops: { jelly: [0, 2] } },
+  fish:      { name: 'Fish',        ai: 'swim',  color: '#ffab91', w: 0.7, h: 0.4, hp: 8,  speed: 0.06,  damage: 0,  hostile: false, drops: { raw_fish: [1, 1] } },
+};
+// Elite enemies: rarer, bigger, tougher, and they drop extra loot (rolls = how many random items from loot)
+const ELITE = { chance: 0.08, hp: 3, damage: 1.5, size: 1.3, rolls: 2, loot: [
+  { item: 'iron',     min: 3, max: 7, minDepth: 0 },   { item: 'gold',    min: 2, max: 5, minDepth: 25 },
+  { item: 'diamond',  min: 1, max: 3, minDepth: 60 },  { item: 'ruby',    min: 1, max: 2, minDepth: 100 },
+  { item: 'mythril',  min: 1, max: 2, minDepth: 140 }, { item: 'obsidian', min: 2, max: 4, minDepth: 40 } ] };
+const SPAWN = { every: 90, chance: 0.6, maxEnemies: 8, maxPassive: 6, minDist: 14, maxDist: 32, aggroDist: 22, despawnDist: 60 };
+
+// CLOUDS (background): par = parallax (smaller = farther away), ymin/ymax = height above the ground (blocks), alpha = see-through amount
+const CLOUD_LAYERS = [
+  { id: 1, par: 0.25, ymin: -175, ymax: -130, scale: 1.6, size: 9, alpha: 0.22, cover: 0.55 },   // high, very see-through
+  { id: 2, par: 0.45, ymin: -125, ymax: -35,  scale: 1.0, size: 6, alpha: 0.38, cover: 0.45 },
+];
+// WEATHER: dim = how much it darkens the day, cloud = more clouds, rain = rain/snow strength. next = what can follow.
+const WEATHER = {
+  clear:  { name: 'Clear',  dim: 0,    cloud: 0,   rain: 0,   next: ['clear', 'cloudy'] },
+  cloudy: { name: 'Cloudy', dim: 0.12, cloud: 0.7, rain: 0,   next: ['clear', 'rain'] },
+  rain:   { name: 'Rain',   dim: 0.28, cloud: 1,   rain: 1,   next: ['cloudy', 'storm', 'clear'] },
+  storm:  { name: 'Storm',  dim: 0.42, cloud: 1,   rain: 1.6, next: ['rain'] },
+};
+
+// Trees: how often they appear and how tall
+const TREES = { chance: 0.08, minHeight: 4, maxHeight: 6 };
+
+/* =====================================================================
+   GAME CODE (you can read it, but you don't need to change it)
+   ===================================================================== */
+const canvas = document.getElementById('c'), ctx = canvas.getContext('2d');
+let TS = CONFIG.tileSize;
+const H = CONFIG.surfaceLevel + CONFIG.worldDepth + 1;
+function resize() { canvas.width = innerWidth; canvas.height = innerHeight; }
+addEventListener('resize', resize); resize();
+
+// ---------- World generation ----------
+// The world is endless sideways, so every per-column table is an object keyed by x (x can be negative).
+const world = {};                       // world[x][y] = block name
+const rnd = (a, b) => a + Math.random() * (b - a);
+const ph = [rnd(0, 9), rnd(0, 9), rnd(0, 9), rnd(0, 9), rnd(0, 9), rnd(0, 9)];
+const heights = {}, biomeCol = {}, ubc = {};     // ubc[x][y] = underground biome (index into UNDER_KEYS)
+function oceanDepth(x) {            // 0 = no ocean here, up to 1 = deep ocean
+  if (Math.abs(x) < CONFIG.spawnForest + 40) return 0;
+  const v = vnoise(x * CONFIG.biomeScale * 0.8 + 900, 7) * 0.8 + vnoise(x * CONFIG.biomeScale * 2.4 + 900, 7) * 0.2;
+  return Math.max(0, Math.min(1, (v - CONFIG.oceanThreshold) / 0.2));
+}
+function surfaceBiome(x) {          // which biome is on the surface at this x (bigger biomes = smaller biomeScale)
+  if (Math.abs(x) < CONFIG.spawnForest) return 'forest';
+  if (oceanDepth(x) > 0.12) return 'ocean';
+  const v = vnoise(x * CONFIG.biomeScale + 500, 3) * 0.8 + vnoise(x * CONFIG.biomeScale * 3 + 500, 3) * 0.2;
+  return v < 0.4 ? 'snow' : v > 0.6 ? 'desert' : 'forest';
+}
+function underBiome(x, y, depth) {  // which underground biome is here
+  const bio = biomeCol[x];
+  if (bio === 'snow') return 'ice';
+  if (bio === 'desert') return 'sand';
+  return depth > 20 && fbm(x * 0.012 + 300, y * 0.012 + 300) > 0.6 ? 'fungal' : 'stone';
+}
+function caveBlock(key, depth) {    // the rock block for this spot
+  const u = UNDER[key];
+  if (u.patch && Math.random() < 0.5) return u.patch;
+  return depth > CONFIG.deepStoneDepth ? u.deep : u.fill;
+}
+function wallColor(x, y, depth) {   // background wall color behind this tile
+  if (depth <= 5) return BIOMES[biomeCol[x]].wall;
+  const u = UNDER[UNDER_KEYS[ubc[x][y]]];
+  return depth > CONFIG.deepStoneDepth ? u.deepWall : u.wall;
+}
+let seed = Math.random() * 1e4;
+const hash = (x, y) => { let h = Math.imul(x | 0, 374761393) + Math.imul(y | 0, 668265263) + Math.imul(seed | 0, 1274126177); h = Math.imul(h ^ (h >>> 13), 1274126177); return ((h ^ (h >>> 16)) >>> 0) / 4294967296; };   // fast random number from coordinates
+function vnoise(x, y) {          // smooth random noise (0-1)
+  const xi = Math.floor(x), yi = Math.floor(y), s = t => t * t * (3 - 2 * t), u = s(x - xi), v = s(y - yi);
+  const top = hash(xi, yi) * (1 - u) + hash(xi + 1, yi) * u, bot = hash(xi, yi + 1) * (1 - u) + hash(xi + 1, yi + 1) * u;
+  return top * (1 - v) + bot * v;
+}
+const fbm = (x, y) => vnoise(x, y) * 0.6 + vnoise(x * 2.1, y * 2.1) * 0.3 + vnoise(x * 4.3, y * 4.3) * 0.1;
+
+// ---------- World generation (in chunks, so the world can be endless) ----------
+const CH = 48;                                       // chunk width: the world is made 48 columns at a time
+const chunks = new Set();
+const surfaceHeight = x => Math.floor(CONFIG.surfaceLevel + Math.sin(x * 0.05 + ph[0]) * 6 + Math.sin(x * 0.13 + ph[1]) * 3 + Math.sin(x * 0.011 + ph[2]) * 10);
+// ---- Sky islands ----
+// Islands sit on a grid (one possible island per ISL columns). Everything about an island comes from hash(), so every chunk
+// agrees on it, and an island can be bigger than a chunk.
+const ISL = 100;
+const islandSeen = new Set();
+function islandInfo(k) {
+  if (hash(k, 77) > CONFIG.islandChance) return null;
+  const w = Math.floor(14 + hash(k, 78) * 17), thick = Math.floor(8 + hash(k, 79) * 8);         // 29-65 wide, 8-15 thick
+  const cx = Math.floor(k * ISL + w + 4 + hash(k, 80) * (ISL - 2 * w - 8));
+  const [lo, hi] = CONFIG.islandBands[Math.floor(hash(k, 81) * CONFIG.islandBands.length)];
+  const cy = Math.floor(CONFIG.surfaceLevel - (lo + hash(k, 82) * (hi - lo)));
+  const biome = Object.keys(SKY_BIOMES)[Math.floor(hash(k * 7919 + 13, 1000 + k) * Object.keys(SKY_BIOMES).length)];
+  return { k, w, thick, cx, cy, biome };
+}
+function generateIslands(c0, c1) {
+  for (let k = Math.floor(c0 / ISL); k <= Math.floor(c1 / ISL); k++) {
+    const I = islandInfo(k); if (!I) continue;
+    const { w, thick, cx, cy } = I, B = SKY_BIOMES[I.biome], inChunk = x => x >= c0 && x <= c1;
+    const put = (x, y, b, onlyAir = true) => { if (inChunk(x) && y >= 0 && (!onlyAir || world[x][y] === 'air')) world[x][y] = b; };
+    for (let x = Math.max(c0, cx - w); x <= Math.min(c1, cx + w); x++) {
+      const t = Math.abs(x - cx) / w, bottom = cy + Math.round(thick * (1 - Math.pow(t, 1.5))) + Math.floor(hash(x, k) * 2);
+      for (let y = cy; y <= bottom; y++) {
+        let b = y === cy ? B.top : y < cy + 3 ? B.body : B.under;
+        if (y > cy + 3 && hash(x * 31 + y, k + 9) < B.ore[1]) b = B.ore[0];
+        put(x, y, b);
+      }
+      if (t > 0.2 && hash(x, k + 500) < 0.22) for (let y = bottom + 1, n = 1 + Math.floor(hash(x, k + 600) * 4); n > 0; n--, y++) put(x, y, B.under);   // hanging rocks
+    }
+    const spot = i => cx + Math.floor((hash(k, 91 + i) * 2 - 1) * (w - 4));                      // where decoration number i goes
+    if (B.deco === 'blossoms') for (let i = 0, n = 3 + Math.floor(hash(k, 90) * 4); i < n; i++) {
+      const tx = spot(i), th = 3 + Math.floor(hash(k, 120 + i) * 3);
+      for (let y = cy - 1; y >= cy - th; y--) put(tx, y, 'wood');
+      for (let dx = -2; dx <= 2; dx++) for (let dy = -2; dy <= 1; dy++) if (Math.abs(dx) + Math.abs(dy) < 4) put(tx + dx, cy - th + dy, 'blossom');
+    }
+    if (B.deco === 'spires') for (let i = 0, n = 4 + Math.floor(hash(k, 90) * 4); i < n; i++) {
+      const tx = spot(i), h = 3 + Math.floor(hash(k, 120 + i) * 6);
+      for (let j = 0; j < h; j++) { put(tx, cy - 1 - j, 'crystal'); if (j < h / 2) put(tx + 1, cy - 1 - j, 'crystal'); }
+    }
+    if (B.deco === 'pillars') for (let i = 0, n = 3 + Math.floor(hash(k, 90) * 3); i < n; i++) {
+      const tx = spot(i), h = 4 + Math.floor(hash(k, 120 + i) * 5), broken = hash(k, 140 + i) > 0.5;
+      for (let j = 0; j < (broken ? h - 2 : h); j++) put(tx, cy - 1 - j, 'sunstone');
+      if (!broken) for (let dx = -1; dx <= 1; dx++) put(tx + dx, cy - 1 - h, 'cloudstone');
+    }
+    if (!islandSeen.has(k)) { islandSeen.add(k); islands.push({ x: cx + 0.5, y: cy + thick / 2, w, biome: I.biome, haze: B.haze }); }
+  }
+}
+const ORES = Object.entries(BLOCKS).filter(([n, d]) => d.ore);
+const islands = [];                                  // floating islands (for the haze effect)
+function generateChunk(c) {
+  const c0 = c * CH, c1 = c0 + CH - 1;
+  chunks.add(c);
+  for (let x = c0; x <= c1; x++) {                   // terrain, caves, ores
+    world[x] = []; fl[x] = new Uint8Array(H); light[x] = []; glow[x] = []; ubc[x] = new Uint8Array(H);
+    const ov = oceanDepth(x), bio = surfaceBiome(x);
+    let h = surfaceHeight(x);
+    if (ov > 0) { const k = Math.min(1, ov * 3); h = Math.round(h + (CONFIG.surfaceLevel + CONFIG.seaOffset + 8 + ov * CONFIG.oceanDepth - h) * (k * k * (3 - 2 * k))); }   // sea floor
+    heights[x] = h; biomeCol[x] = bio;
+    for (let y = 0; y < H; y++) {
+      let b = 'air';
+      if (y === H - 1) b = 'bedrock';
+      else if (y === h) b = ov > 0 ? 'sand' : BIOMES[bio].top;
+      else if (y > h && y < h + 5) b = ov > 0 ? 'sand' : BIOMES[bio].sub;
+      else if (y > h) {
+        const depth = y - h, uk = underBiome(x, y, depth);
+        ubc[x][y] = UNDER_KEYS.indexOf(uk);
+        b = caveBlock(uk, depth);
+        if (depth > 6 && (fbm(x * 0.06, y * 0.09) > CONFIG.caveSize - Math.min(0.06, depth / 2500)                 // caverns
+          || Math.abs(fbm(x * 0.045 + 100, y * 0.045 + 100) - 0.5) < CONFIG.tunnelWidth)) b = 'air';          // winding tunnels
+        else for (const [name, d] of ORES) {
+          if (depth < d.ore.minDepth) continue;
+          if (Math.random() < d.ore.chance * Math.min(CONFIG.oreBoostMax, 1 + (depth - d.ore.minDepth) * CONFIG.oreDepthBoost)) { b = name; break; }
+        }
+      }
+      world[x][y] = b;
+    }
+    if (ov > 0) for (let y = CONFIG.surfaceLevel + CONFIG.seaOffset; y < h; y++) world[x][y] = 'water';   // fill the ocean
+  }
+  if (Math.random() < CONFIG.lakeChance) for (let tries = 0; tries < 10; tries++) {   // a surface lake in flat ground
+    const w = Math.floor(rnd(CONFIG.lakeWidth[0], CONFIG.lakeWidth[1] + 1)), cx = c0 + w + 6 + Math.floor(Math.random() * (CH - 2 * w - 12));
+    if (biomeCol[cx] === 'ocean') continue;
+    let lo = 1e9, hi = -1;
+    for (let x = cx - w - 2; x <= cx + w + 2; x++) { lo = Math.min(lo, heights[x]); hi = Math.max(hi, heights[x]); }
+    if (hi - lo > 3) continue;                       // too hilly here
+    const level = hi;                                // the water surface
+    for (let x = cx - w; x <= cx + w; x++) {
+      const t = (x - cx) / w, d = 1 + Math.round(CONFIG.lakeDepth * (1 - t * t));
+      for (let y = heights[x]; y < level; y++) world[x][y] = 'air';          // flatten ground above the water
+      for (let y = level; y < level + d; y++) world[x][y] = 'water';
+      heights[x] = level + d; world[x][level + d] = 'sand';                  // sandy lake floor
+    }
+    for (let i = 1; i <= 4; i++) for (const x of [cx - w - i, cx + w + i])    // sandy banks
+      for (let k = 0; k < 2; k++) world[x][heights[x] + k] = 'sand';
+    break;
+  }
+  // Cave pools: water in the upper caves, lava in the deep caves
+  const solidAt = (x, y) => world[x] !== undefined && world[x][y] !== 'air' && BLOCKS[world[x][y]].solid !== false;
+  for (let y = H - 2; y > 0; y--) {
+    for (let x = c0; x <= c1; x++) {
+      if (world[x][y] !== 'air' || y - heights[x] < CONFIG.poolMinDepth) continue;
+      const a = x; let b = x;
+      while (b + 1 <= c1 && world[b + 1][y] === 'air') b++;
+      x = b;                                                // skip to the end of this stretch of air
+      if (!solidAt(a - 1, y) || !solidAt(b + 1, y)) continue;   // must be walled in on both sides
+      let ok = true, wet = false;
+      for (let i = a; i <= b && ok; i++) {                  // needs a floor (or liquid) under every block
+        const u = world[i][y + 1];
+        if (u === 'water' || u === 'lava') wet = true; else if (!solidAt(i, y + 1)) ok = false;
+      }
+      if (!ok || Math.random() > (wet ? CONFIG.poolContinue : CONFIG.poolStart)) continue;
+      const liquid = y - heights[a] > CONFIG.lavaDepth ? 'lava' : 'water';
+      for (let i = a; i <= b; i++) world[i][y] = liquid;
+    }
+  }
+  for (let x = c0 + 3; x <= c1 - 3; x++) {          // trees & cacti (which kind depends on the biome)
+    const top = world[x][heights[x]], bio = biomeCol[x];
+    if (Math.abs(heights[x - 1] - heights[x]) >= 2) continue;
+    if (bio === 'desert' && top === 'sand' && Math.random() < 0.06) {
+      for (let k = 1; k <= 2 + Math.floor(Math.random() * 3); k++) world[x][heights[x] - k] = 'cactus';
+      x += 3;
+    } else if (((bio === 'forest' && top === 'grass') || (bio === 'snow' && top === 'snow')) && Math.random() < TREES.chance) {
+      const leaf = bio === 'snow' ? 'pine' : 'leaves', th = Math.floor(rnd(TREES.minHeight, TREES.maxHeight + 1)), tt = heights[x] - th;
+      for (let y = heights[x] - 1; y >= tt; y--) world[x][y] = 'wood';
+      for (let dx = -2; dx <= 2; dx++) for (let dy = -2; dy <= 1; dy++)
+        if (Math.abs(dx) + Math.abs(dy) < 4 && world[x + dx][tt + dy] === 'air') world[x + dx][tt + dy] = leaf;
+      x += 3;
+    }
+  }
+  generateIslands(c0, c1);
+}
+const get = (x, y) => (y < 0 || y >= H || !world[x]) ? 'bedrock' : world[x][y];   // not-yet-generated areas count as bedrock
+const isSolid = (x, y) => BLOCKS[get(x, y)].solid !== false && get(x, y) !== 'air';
+
+// ---------- Player ----------
+// ---------- Lighting ----------
+// light[x][y] = how much sunlight reaches that tile (0-1). Open sky = 1, fades going underground.
+const light = {}, skyTop = {};
+function setSky(x) { let y = 0; while (y < H && !isSolid(x, y)) y++; skyTop[x] = y; }
+const glow = [];            // light from torches & lava (doesn't change with day/night or depth)
+function resetLight(x0, x1, y0, y1) {
+  for (let x = x0; x <= x1; x++) { if (!light[x]) continue; for (let y = y0; y <= y1; y++) { light[x][y] = y <= skyTop[x] ? 1 : 0; glow[x][y] = BLOCKS[world[x][y]].emit || 0; } }
+}
+function relax(map, x0, x1, y0, y1, passes) {      // spreads light between neighbours (columns that don't exist yet are skipped)
+  const cost = (x, y) => isSolid(x, y) ? CONFIG.lightSolidCost : CONFIG.lightAirCost;
+  const step = (x, y, d) => {
+    const m = map[x]; if (!m) return;
+    let l = m[y]; const nb = map[x + d];
+    if (nb) l = Math.max(l, nb[y] - cost(x, y));
+    if (y + d >= 0 && y + d < H) l = Math.max(l, m[y + d] - cost(x, y));
+    m[y] = l;
+  };
+  for (let n = 0; n < passes; n++) {
+    for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) step(x, y, -1);
+    for (let x = x1; x >= x0; x--) for (let y = y1; y >= y0; y--) step(x, y, 1);
+  }
+}
+function lightColumns(c0, c1) {                    // light up freshly generated columns
+  for (let x = c0; x <= c1; x++) setSky(x);
+  resetLight(c0, c1, 0, H - 1);
+  let deepest = 0; for (let x = c0; x <= c1; x++) deepest = Math.max(deepest, heights[x]);
+  relax(light, c0 - 12, c1 + 12, 0, Math.min(H - 1, deepest + 50), 2);      // daylight only reaches ~50 blocks under the ground
+  relax(glow, c0 - 12, c1 + 12, 0, H - 1, 2);
+}
+function updateLight(x, y) {                       // call after a block changes
+  if (!light[x]) return;
+  setSky(x);
+  const R = 20, y0 = Math.max(0, y - R), y1 = Math.min(H - 1, y + R);   // R must be bigger than the brightest light's reach
+  resetLight(x - R, x + R, y0, y1); relax(light, x - R, x + R, y0, y1, 2); relax(glow, x - R, x + R, y0, y1, 2);
+}
+
+// ---------- Flowing liquids ----------
+// fl[x][y] = liquid level: 8 = source block (never runs out), 1-7 = flowing liquid that thins out as it spreads.
+const fl = {};
+const isLiq = (x, y) => BLOCKS[world[x][y]].liquid && fl[x][y] > 0;
+function initLiquids(c0, c1) { for (let x = c0; x <= c1; x++) for (let y = 0; y < H; y++) if (BLOCKS[world[x][y]].liquid) fl[x][y] = 8; }
+function flowStep(lavaTurn) {
+  const cx = Math.floor(player.x), cy = Math.floor(player.y), [rx, ry] = CONFIG.flowRadius;
+  const x0 = cx - rx, x1 = cx + rx, y0 = Math.max(1, cy - ry), y1 = Math.min(H - 2, cy + ry);
+  const changes = [];
+  for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) {
+    const b = world[x][y], cur = BLOCKS[b].liquid ? fl[x][y] : 0;
+    if (b !== 'air' && !BLOCKS[b].liquid) continue;           // solid blocks, torches etc. stop liquid
+    if (cur === 8) continue;                                   // source blocks never change
+    let type = null, lvl = 0;
+    if (isLiq(x, y - 1)) { type = world[x][y - 1]; lvl = 7; }  // liquid above: it falls in
+    else for (const dx of [-1, 1]) {                           // otherwise spread sideways from a neighbour that rests on something
+      if (!isLiq(x + dx, y)) continue;
+      const under = world[x + dx][y + 1];
+      if (under === 'air' || (BLOCKS[under].liquid && (fl[x + dx][y] < 8 || fl[x + dx][y + 1] < 8))) continue;   // falling water doesn't spread sideways; only water resting on the ground (or a source resting on a source) does
+      const t = world[x + dx][y], l = fl[x + dx][y] - (BLOCKS[t].decay || 1);
+      if (l > lvl) { lvl = l; type = t; }
+    }
+    if (lvl === cur && (lvl === 0 || type === b)) continue;    // nothing changes here
+    if ((type === 'lava' || b === 'lava') && !lavaTurn) continue;
+    changes.push([x, y, type, lvl]);
+  }
+  let lit = 0;
+  for (const [x, y, type, lvl] of changes) {
+    const old = world[x][y];
+    if (lvl > 0) {
+      let clash = false;
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const nx = x + dx, ny = y + dy, n = world[nx][ny];
+        if (BLOCKS[n].liquid && n !== type) {
+          clash = true;
+          if (type === 'water') { world[nx][ny] = 'obsidian'; fl[nx][ny] = 0; updateLight(nx, ny); }   // water cools lava into obsidian
+        }
+      }
+      if ((clash && type === 'lava') || (BLOCKS[old].liquid && old !== type)) { world[x][y] = 'obsidian'; fl[x][y] = 0; updateLight(x, y); continue; }   // water + lava = obsidian
+      world[x][y] = type; fl[x][y] = lvl;
+    } else { world[x][y] = 'air'; fl[x][y] = 0; }
+    if ((type === 'lava' || old === 'lava') && lit++ < 6) updateLight(x, y);
+  }
+}
+let flowTicks = 0;
+function updateLiquids() { if (frame % CONFIG.flowEvery === 0) { flowTicks++; flowStep(flowTicks % CONFIG.lavaFlowEvery === 0); } }
+
+function buildChunk(c) { generateChunk(c); initLiquids(c * CH, c * CH + CH - 1); lightColumns(c * CH, c * CH + CH - 1); }
+function ensureChunks(px, all) {                   // makes sure the world exists around x = px (one new chunk per frame while walking)
+  const r = CONFIG.loadRadius;
+  for (let c = Math.floor((px - r) / CH); c <= Math.floor((px + r) / CH); c++)
+    if (!chunks.has(c)) { buildChunk(c); if (!all) return; }
+}
+ensureChunks(0, true);
+const sx = 0;
+const player = { x: sx + 0.5, y: heights[sx] - 3, vx: 0, vy: 0, w: 0.7, h: 1.8, ground: false };
+const inv = { ...CONFIG.startItems };
+let sel = 0;                                       // selected hotbar slot (0-8)
+// Inventory: inv[item] = how many you have. slots[i] = which item sits in slot i (slots 0-8 are the hotbar).
+const slots = Array(36).fill(null);
+const dur = {};                                    // dur[item] = durability left on the tool you're currently using
+let toastText = '', toastT = 0;
+function toast(t) { toastText = t; toastT = 150; }
+function nice(k) { return k.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()); }
+const discovered = new Set();      // items you've ever picked up (recipes using them become visible)
+
+// ---------- Health & stamina ----------
+const stats = { health: CONFIG.maxHealth, stamina: CONFIG.maxStamina, oxygen: CONFIG.maxOxygen, hunger: CONFIG.maxHunger, exh: 0, sprinting: false, hurtUntil: 0, atkReady: 0, exhausted: false, staminaWait: 0, lastHurt: -9999, flash: 0, msg: 0 };
+const spawn = { x: player.x, y: player.y };
+player.peakY = player.y;                          // highest point of the current fall
+let frame = 0;
+function damage(n) {
+  if (debug.creative) return;   // god mode
+  //                              // call damage(10) from anywhere to hurt the player
+  stats.health -= n; stats.lastHurt = frame; stats.flash = 0.6;
+  if (stats.health <= 0) die();
+}
+function die() {                                  // respawn at the start with full health (you keep your items)
+  Object.assign(player, { x: spawn.x, y: spawn.y, vx: 0, vy: 0, peakY: spawn.y });
+  stats.health = CONFIG.maxHealth; stats.stamina = CONFIG.maxStamina; stats.oxygen = CONFIG.maxOxygen; stats.hunger = CONFIG.maxHunger; stats.exhausted = false; stats.msg = 150;
+}
+function updateStamina(sprinting) {
+  if (debug.creative) { stats.stamina = CONFIG.maxStamina; stats.exhausted = false; return; }
+  if (sprinting) {
+    stats.stamina = Math.max(0, stats.stamina - CONFIG.sprintDrain); stats.staminaWait = CONFIG.staminaDelay;
+    if (stats.stamina === 0) stats.exhausted = true;
+  } else if (stats.staminaWait > 0) stats.staminaWait--;
+  else stats.stamina = Math.min(CONFIG.maxStamina, stats.stamina + CONFIG.staminaRegen);
+  if (stats.exhausted && stats.stamina >= CONFIG.staminaRecover) stats.exhausted = false;
+}
+function updateHunger() {
+  if (debug.creative) { stats.hunger = CONFIG.maxHunger; return; }
+  stats.exh += CONFIG.hungerBase + (stats.sprinting ? CONFIG.hungerSprint : 0);
+  if (stats.exh >= 4) { stats.exh -= 4; stats.hunger = Math.max(0, stats.hunger - 1); }
+  if (stats.hunger <= 0 && frame % 240 === 0) damage(CONFIG.starveDamage);        // starving
+}
+function eat(item) {
+  if (stats.hunger >= CONFIG.maxHunger) { toast('Not hungry'); return; }
+  stats.hunger = Math.min(CONFIG.maxHunger, stats.hunger + ITEMS[item].food);
+  if (!debug.creative) inv[item]--;
+  refreshUI();
+}
+function updateHealth() {
+  if (frame - stats.lastHurt > CONFIG.regenDelay && stats.hunger >= CONFIG.regenHunger && stats.health < CONFIG.maxHealth) {   // heal only when well fed
+    stats.health = Math.min(CONFIG.maxHealth, stats.health + CONFIG.healthRegen); stats.exh += CONFIG.healthRegen * CONFIG.regenExhaust;
+  }
+  stats.flash = Math.max(0, stats.flash - 0.015); if (stats.msg > 0) stats.msg--;
+}
+function iconRow(x, y, value, total, dir, drawIcon) {   // a row of icons, value = how many are filled (can be half)
+  for (let i = 0; i < total; i++) {
+    const ix = dir > 0 ? x + i * 20 : x - (i + 1) * 20, f = Math.max(0, Math.min(1, value - i));
+    drawIcon(ix, y, false);
+    if (f > 0) { ctx.save(); ctx.beginPath(); ctx.rect(ix - 1, y - 3, f > 0.5 ? 22 : 11, 26); ctx.clip(); drawIcon(ix, y, true); ctx.restore(); }
+  }
+}
+const heartIcon = (x, y, on) => { ctx.fillStyle = on ? '#e53935' : '#3a1a1a'; ctx.strokeStyle = '#000'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(x + 9, y + 16); ctx.bezierCurveTo(x - 4, y + 6, x + 2, y - 3, x + 9, y + 4); ctx.bezierCurveTo(x + 16, y - 3, x + 22, y + 6, x + 9, y + 16); ctx.fill(); ctx.stroke(); };
+const meatIcon = (x, y, on) => { ctx.strokeStyle = on ? '#eee' : '#555'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(x + 7, y + 12); ctx.lineTo(x + 2, y + 18); ctx.stroke(); ctx.fillStyle = on ? '#c97b3a' : '#3b2a1a'; ctx.strokeStyle = '#000'; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(x + 12, y + 8, 7, 0, 7); ctx.fill(); ctx.stroke(); };
+const bubbleIcon = (x, y, on) => { ctx.fillStyle = on ? 'rgba(120,200,255,.85)' : 'rgba(40,60,90,.5)'; ctx.strokeStyle = '#cfe9ff'; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(x + 10, y + 9, 6, 0, 7); ctx.fill(); ctx.stroke(); };
+function drawHud() {
+  ctx.textAlign = 'center'; ctx.font = '12px system-ui, sans-serif';
+  // Minecraft-style bars above the hotbar: hearts left, hunger right, air bubbles above hunger, stamina as a thin bar
+  const cxm = canvas.width / 2, left = cxm - 232, right = cxm + 232, rowY = canvas.height - 92;
+  ctx.fillStyle = 'rgba(0,0,0,.6)'; ctx.fillRect(left, canvas.height - 69, 464, 7);
+  ctx.fillStyle = stats.exhausted ? '#b8860b' : '#43a047'; ctx.fillRect(left + 1, canvas.height - 68, 462 * Math.max(0, stats.stamina / CONFIG.maxStamina), 5);
+  iconRow(left, rowY, stats.health / CONFIG.maxHealth * 10, 10, 1, heartIcon);
+  iconRow(right, rowY, stats.hunger / CONFIG.maxHunger * 10, 10, -1, meatIcon);
+  if (stats.oxygen < CONFIG.maxOxygen) iconRow(right, rowY - 22, Math.ceil(stats.oxygen / CONFIG.maxOxygen * 20) / 2, 10, -1, bubbleIcon);
+  // tooltip at the top: what you're looking at
+  const t = target(), mx = (mouse.x + camX()) / TS, my = (mouse.y + camY()) / TS;
+  const en = enemies.find(e => Math.abs(mx - e.x) < e.w / 2 + 0.6 && Math.abs(my - (e.y + e.h / 2)) < e.h / 2 + 0.6);
+  let line = '', col = '#fff';
+  if (en) { line = (en.elite ? 'Elite ' : '') + ENEMIES[en.type].name + '  (' + Math.ceil(en.hp) + ' / ' + en.maxHp + ' HP)'; if (en.elite) col = '#ffd54a'; }
+  else if (!invOpen && get(t.x, t.y) !== 'air') { line = nice(get(t.x, t.y)); if (!canReach(t)) { line += '  (out of reach)'; col = '#bbb'; } }
+  const bx = Math.floor(player.x), by = Math.floor(player.y + 0.9), bd = by - heights[bx];
+  const isl = islands.find(i => Math.abs(i.x - player.x) < i.w + 12 && Math.abs(i.y - (player.y + 0.9)) < i.w * 0.6 + 12);
+  const bname = bd < -20 ? (isl ? SKY_BIOMES[isl.biome].name : 'Open Sky') : bd > 6 ? UNDER[underBiome(bx, by, bd)].name : BIOMES[biomeCol[bx]].name;
+  ctx.lineWidth = 3; ctx.strokeStyle = '#000';
+  if (line) { ctx.font = 'bold 16px system-ui, sans-serif'; ctx.fillStyle = col; ctx.strokeText(line, canvas.width / 2, 26); ctx.fillText(line, canvas.width / 2, 26); }
+  const sub = bname + '  ·  ' + WEATHER[weather.type].name;
+  ctx.font = '12px system-ui, sans-serif'; ctx.fillStyle = '#ddd'; ctx.strokeText(sub, canvas.width / 2, 44); ctx.fillText(sub, canvas.width / 2, 44);
+  if (toastT > 0) { toastT--; ctx.font = 'bold 18px system-ui, sans-serif'; ctx.fillStyle = '#ffd54a'; ctx.strokeText(toastText, canvas.width / 2, 70); ctx.fillText(toastText, canvas.width / 2, 70); }
+  if (stats.flash > 0) { ctx.fillStyle = `rgba(255,0,0,${stats.flash * 0.5})`; ctx.fillRect(0, 0, canvas.width, canvas.height); }   // red flash when hurt
+  if (stats.msg > 0) { ctx.fillStyle = '#fff'; ctx.font = 'bold 32px system-ui, sans-serif'; ctx.fillText('You died!', canvas.width / 2, canvas.height / 3); }
+}
+
+function hits(px, py) {
+  if (debug.noclip) return false;
+  for (let tx = Math.floor(px - player.w / 2); tx <= Math.floor(px + player.w / 2); tx++)
+    for (let ty = Math.floor(py); ty <= Math.floor(py + player.h); ty++)
+      if (isSolid(tx, ty)) return true;
+  return false;
+}
+function updatePlayer() {
+  const p = player;
+  const wasGround = p.ground, dir = (keys.d ? 1 : 0) - (keys.a ? 1 : 0);
+  const sprinting = keys.shift && dir !== 0 && stats.stamina > 0 && !stats.exhausted && stats.hunger > CONFIG.sprintHunger;
+  stats.sprinting = sprinting;
+  updateStamina(sprinting);
+  if (dir) p.face = dir;
+  const feetB = BLOCKS[get(Math.floor(p.x), Math.floor(p.y + 1.6))], bodyB = BLOCKS[get(Math.floor(p.x), Math.floor(p.y + 0.9))];
+  const inLiquid = feetB.liquid || bodyB.liquid, burn = Math.max(feetB.damage || 0, bodyB.damage || 0);
+  if (burn) damage(burn);                                    // lava!
+  p.inLiquid = inLiquid;
+  if (BLOCKS[get(Math.floor(p.x), Math.floor(p.y + 0.3))].liquid) {          // head underwater: hold your breath
+    stats.oxygen = Math.max(0, stats.oxygen - 1);
+    if (stats.oxygen === 0) damage(CONFIG.drownDamage);                       // drowning!
+  } else stats.oxygen = Math.min(CONFIG.maxOxygen, stats.oxygen + CONFIG.oxygenRefill);
+  if (debug.creative) stats.oxygen = CONFIG.maxOxygen;
+  p.vx = dir * CONFIG.moveSpeed * (sprinting ? CONFIG.sprintSpeed : 1) * (inLiquid ? CONFIG.liquidSlow : 1);
+  p.vx += p.kx || 0; p.kx = (p.kx || 0) * 0.85;      // knockback from enemies
+  if ((keys.w || keys[' ']) && p.ground) { p.vy = -CONFIG.jumpPower; p.ground = false; }
+  if (debug.fly || debug.noclip) {                          // flying: W/Space = up, S = down
+    p.vy = ((keys.s ? 1 : 0) - (keys.w || keys[' '] ? 1 : 0)) * CONFIG.moveSpeed * 1.6; p.peakY = p.y;
+  } else if (inLiquid) {                                            // swimming: sink slowly, hold W/Space to swim up
+    p.vy = Math.min(p.vy + CONFIG.gravity * 0.35, 0.1);
+    if (keys.w || keys[' ']) p.vy = -0.1;
+  } else p.vy = Math.min(p.vy + CONFIG.gravity, 0.8);
+  for (let i = 0; i < 8; i++) { p.x += p.vx / 8; if (hits(p.x, p.y)) { p.x -= p.vx / 8; break; } }
+  p.ground = false;
+  for (let i = 0; i < 8; i++) {
+    p.y += p.vy / 8;
+    if (hits(p.x, p.y)) { p.y -= p.vy / 8; if (p.vy > 0) p.ground = true; p.vy = 0; break; }
+  }
+  // fall damage: measure how far we dropped when we land (water cancels the fall)
+  if (inLiquid) p.peakY = p.y;
+  if (p.ground) {
+    if (!wasGround) { const d = p.y - p.peakY - CONFIG.safeFall; if (d > 0) damage(Math.round(d * CONFIG.fallDamage)); }
+    p.peakY = p.y;
+  } else p.peakY = Math.min(p.peakY, p.y);
+  // auto-step up 1 block when walking into a ledge
+  if (p.vx && p.ground && hits(p.x + Math.sign(p.vx) * 0.1, p.y) && !hits(p.x + Math.sign(p.vx) * 0.1, p.y - 1)) p.y -= 1;
+}
+
+// ---------- Input ----------
+const keys = {};
+const mouse = { x: 0, y: 0, left: false };
+addEventListener('keydown', e => {
+  if (e.key === '`') { e.preventDefault(); toggleDebug(); return; }
+  if (['INPUT', 'SELECT'].includes(e.target.tagName)) return;   // typing in a menu
+  const k = e.key.toLowerCase(); keys[k] = true;
+  if (k >= '1' && k <= '9') { sel = +k - 1; refreshUI(); }
+  if (k === 'e' || k === 'i') toggleInv();
+  if (k === 'escape' && invOpen) toggleInv(false);
+  if (k === ' ') e.preventDefault();
+});
+addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
+canvas.addEventListener('mousemove', e => { mouse.x = e.clientX; mouse.y = e.clientY; });
+canvas.addEventListener('mousedown', e => { mouse.x = e.clientX; mouse.y = e.clientY; if (e.button === 0) mouse.left = true; if (e.button === 2) place(); });
+addEventListener('mouseup', () => mouse.left = false);
+canvas.addEventListener('contextmenu', e => e.preventDefault());
+addEventListener('wheel', e => { if (e.target.closest && e.target.closest('#debug, #inv')) return; sel = (sel + Math.sign(e.deltaY) + 9) % 9; refreshUI(); });
+
+// ---------- Inventory / UI ----------
+const owned = () => Object.keys(ITEMS).filter(k => inv[k] > 0);
+const itemColor = k => ITEMS[k].color || BLOCKS[ITEMS[k].block].color;
+function icon(k) {            // returns a little SVG picture for each item
+  const it = ITEMS[k], col = itemColor(k);
+  let shapes;
+  if (it.tool) {                                   // pickaxe: wooden handle + colored head
+    const handle = 'M6 28L19 9', head = 'M7 13Q22 1 28 17';
+    shapes = `<path d="${handle}" stroke="#000" stroke-width="6" stroke-linecap="round" fill="none"/>
+      <path d="${head}" stroke="#000" stroke-width="8" stroke-linecap="round" fill="none"/>
+      <path d="${handle}" stroke="#b98345" stroke-width="3.5" stroke-linecap="round" fill="none"/>
+      <path d="${head}" stroke="${col}" stroke-width="5" stroke-linecap="round" fill="none"/>`;
+  } else if (it.axe) {                             // axe: handle + wedge head
+    shapes = `<path d="M7 28L21 9" stroke="#000" stroke-width="6" stroke-linecap="round"/><path d="M7 28L21 9" stroke="#b98345" stroke-width="3.5" stroke-linecap="round"/>
+      <path d="M17 5L28 9L25 20L18 14Z" fill="${col}" stroke="#000" stroke-width="1.5"/>`;
+  } else if (it.weapon) {                          // sword: blade + guard + handle
+    shapes = `<path d="M10 22L26 6" stroke="#000" stroke-width="7" stroke-linecap="round"/><path d="M10 22L26 6" stroke="${col}" stroke-width="4" stroke-linecap="round"/>
+      <path d="M6 18L14 26" stroke="#000" stroke-width="5" stroke-linecap="round"/><path d="M6 18L14 26" stroke="#8d6e63" stroke-width="3" stroke-linecap="round"/>
+      <path d="M9 23L4 28" stroke="#6d4c2a" stroke-width="4" stroke-linecap="round"/>`;
+  } else if (it.icon === 'fish') {                 // fish: body + tail
+    shapes = `<ellipse cx="15" cy="16" rx="11" ry="7" fill="${col}" stroke="#000" stroke-opacity=".6"/><path d="M25 16L31 9L31 23Z" fill="${col}" stroke="#000" stroke-opacity=".6"/><circle cx="9" cy="14" r="1.6" fill="#000"/>`;
+  } else if (it.icon === 'bench') {                // crafting bench: table
+    shapes = `<rect x="3" y="12" width="26" height="6" fill="${col}" stroke="#000" stroke-opacity=".6"/>
+      <rect x="6" y="18" width="4" height="10" fill="#6d4c2a"/><rect x="22" y="18" width="4" height="10" fill="#6d4c2a"/>
+      <rect x="9" y="7" width="14" height="5" fill="#8d6e63" stroke="#000" stroke-opacity=".5"/>`;
+  } else if (it.icon === 'torch') {                // torch: stick + flame
+    shapes = `<rect x="14" y="14" width="4" height="15" fill="#8b5a2b" stroke="#000" stroke-opacity=".6"/>
+      <path d="M16 3C21 9 22 13 16 15C10 13 11 9 16 3Z" fill="#ffb300" stroke="#c75b00"/>
+      <path d="M16 8C18.5 11 18.5 13 16 14C13.5 13 13.5 11 16 8Z" fill="#fff3a0"/>`;
+  } else if (it.block) {                           // block: square with shaded edge
+    shapes = `<rect x="3" y="3" width="26" height="26" fill="${col}" stroke="#000" stroke-opacity=".5"/>
+      <rect x="3" y="25" width="26" height="4" fill="#000" fill-opacity=".25"/><rect x="25" y="3" width="4" height="26" fill="#000" fill-opacity=".25"/>`;
+  } else if (it.icon === 'gem') {                  // gem: diamond shape
+    shapes = `<path d="M16 3L28 14L16 29L4 14Z" fill="${col}" stroke="#000" stroke-opacity=".6"/>
+      <path d="M16 3L4 14L16 14Z" fill="#fff" fill-opacity=".45"/>`;
+  } else if (it.icon === 'ingot') {                // ingot: bar shape
+    shapes = `<path d="M8 10L26 10L30 24L4 24Z" fill="${col}" stroke="#000" stroke-opacity=".6"/>
+      <rect x="9" y="12" width="15" height="3" fill="#fff" fill-opacity=".4"/>`;
+  } else {                                         // lump: rough blob
+    shapes = `<circle cx="16" cy="17" r="11" fill="${col}" stroke="#888" stroke-opacity=".6"/>
+      <circle cx="12" cy="13" r="4" fill="#fff" fill-opacity=".25"/>`;
+  }
+  return `<svg viewBox="0 0 32 32" width="100%" height="100%">${shapes}</svg>`;
+}
+function syncSlots() {                             // keep slots in step with what you own (new items go in the first empty slot)
+  for (let i = 0; i < slots.length; i++) if (slots[i] && !(inv[slots[i]] > 0)) slots[i] = null;
+  for (const k of Object.keys(ITEMS)) if (inv[k] > 0 && !slots.includes(k)) {
+    let i = slots.indexOf(null);
+    if (i < 0) { slots.push(...Array(9).fill(null)); i = slots.indexOf(null); }
+    slots[i] = k;
+  }
+}
+const heldItem = () => (slots[sel] && inv[slots[sel]] > 0 ? slots[sel] : null);
+function mineSpeed(def) { const it = heldItem() && ITEMS[heldItem()]; return it ? (def.chop ? (it.axe || 1) : (it.tool || 1)) : 1; }
+function useTool(item, kind) {                     // wears a tool down (kind = 'tool' | 'axe' | 'weapon')
+  if (!item || debug.creative) return;
+  const it = ITEMS[item];
+  if (!it.durability || !it[kind]) return;
+  dur[item] = (dur[item] ?? it.durability) - 1;
+  if (dur[item] <= 0) { inv[item]--; delete dur[item]; toast(nice(item) + ' broke!'); }
+  refreshUI();
+}
+function toolInfo(k) {                             // stat lines for tools & weapons
+  const it = ITEMS[k], out = [];
+  if (it.tool) out.push('Mining speed x' + it.tool);
+  if (it.axe) out.push('Chopping speed x' + it.axe);
+  if (it.weapon) out.push('Damage ' + it.weapon.damage + ' · Attack speed ' + (60 / it.weapon.cooldown).toFixed(1) + '/s');
+  if (it.food) out.push('Restores ' + it.food + ' hunger - right-click to eat');
+  if (it.durability) out.push('Durability ' + (dur[k] ?? it.durability) + '/' + it.durability);
+  return out;
+}
+function benchNear() {
+  const px = Math.floor(player.x), py = Math.floor(player.y + 0.9), R = CONFIG.benchRange;
+  for (let x = px - R; x <= px + R; x++) for (let y = py - 3; y <= py + 3; y++) if (get(x, y) === 'crafting_bench') return true;
+  return false;
+}
+let nearBench = false;
+function add(item, n = 1) { inv[item] = (inv[item] || 0) + n; refreshUI(); }
+
+// ---- Inventory screen (press E) ----
+let invOpen = false, pickSlot = -1;
+const openGroups = new Set(['Tools', 'Weapons', 'Building', 'Lighting', 'Materials']);   // which crafting groups are expanded
+const GROUP_ORDER = ['Food', 'Tools', 'Weapons', 'Building', 'Lighting', 'Materials', 'Pickaxes', 'Axes', 'Swords'];
+// Which group a recipe is listed under. Add  cat: ['Group', 'Subgroup']  to a recipe to choose your own.
+function recipeGroup(r) {
+  const it = ITEMS[r.makes];
+  if (r.cat) return r.cat;
+  if (it.tool) return ['Tools', 'Pickaxes'];
+  if (it.axe) return ['Tools', 'Axes'];
+  if (it.weapon) return ['Weapons', 'Swords'];
+  if (it.icon === 'torch') return ['Lighting'];
+  if (it.block) return ['Building'];
+  return ['Materials'];
+}
+// Complicated recipes (tools & weapons) need a Crafting Bench nearby. Add  bench: true/false  to a recipe to override.
+const needsBench = r => r.bench ?? !!(ITEMS[r.makes].tool || ITEMS[r.makes].axe || ITEMS[r.makes].weapon);
+
+function slotHTML(i) {
+  const k = slots[i], d = k && ITEMS[k].durability, left = k && d ? (dur[k] ?? d) : 0;
+  return `<div class="slot ${i === sel ? 'sel' : ''} ${i === pickSlot ? 'pick' : ''}" data-slot="${i}">${i < 9 ? `<em>${i + 1}</em>` : ''}${k ? icon(k) + `<b>${inv[k]}</b>` : ''}${k && d && left < d ? `<u style="width:${40 * left / d}px"></u>` : ''}</div>`;
+}
+function recipeRow(i) {
+  const r = RECIPES[i], bench = needsBench(r);
+  const afford = Object.entries(r.cost).every(([k, n]) => (inv[k] || 0) >= n), ok = afford && (!bench || nearBench);
+  const cost = Object.entries(r.cost).map(([k, n]) => `<span class="${(inv[k] || 0) >= n ? 'have' : 'lack'}">${n} ${nice(k)} (${inv[k] || 0})</span>`).join(', ');
+  const why = !afford ? '' : (bench && !nearBench ? '<br><span class="lack">Stand near a Crafting Bench</span>' : '');
+  return `<div class="rec ${ok ? 'can' : 'off'}" data-i="${i}"><span class="ic">${icon(r.makes)}</span><div class="txt"><b>${nice(r.makes)}${r.amount > 1 ? ' x' + r.amount : ''}</b>${bench ? ' <i>(Crafting Bench)</i>' : ''}<br>${cost}${why}</div><span class="go">${ok ? 'Craft' : ''}</span></div>`;
+}
+function recipesHTML() {                           // recipes you've discovered, in collapsible groups
+  const root = { kids: {}, rec: [] };
+  RECIPES.forEach((r, i) => {
+    if (!Object.keys(r.cost).some(k => discovered.has(k))) return;     // hidden until you find one of its materials
+    let n = root; for (const g of recipeGroup(r)) n = n.kids[g] ??= { kids: {}, rec: [] };
+    n.rec.push(i);
+  });
+  const count = n => n.rec.length + Object.values(n.kids).reduce((a, c) => a + count(c), 0);
+  const draw = (n, path) => Object.keys(n.kids).sort((a, b) => GROUP_ORDER.indexOf(a) - GROUP_ORDER.indexOf(b)).map(g => {
+    const key = path + g, sub = n.kids[g];
+    return `<details data-g="${key}" ${openGroups.has(key) ? 'open' : ''}><summary>${g} <small>(${count(sub)})</small></summary>${sub.rec.map(recipeRow).join('')}${draw(sub, key + '/')}</details>`;
+  }).join('');
+  return draw(root, '') || '<small>Pick up materials to discover recipes!</small>';
+}
+function refreshUI() {
+  syncSlots();
+  const list = owned(); list.forEach(k => discovered.add(k));
+  sel = ((sel % 9) + 9) % 9;
+  document.getElementById('hotbar').innerHTML = Array.from({ length: 9 }, (_, i) => slotHTML(i)).join('');
+  const held = heldItem();
+  document.getElementById('name').innerHTML = held ? `<b>${nice(held)}</b>${toolInfo(held).map(l => `<small>${l}</small>`).join('')}` : '';
+  if (!invOpen) return;
+  let grid = ''; for (let i = 9; i < slots.length; i++) grid += slotHTML(i);
+  document.getElementById('invgrid').innerHTML = grid + '<div class="gap"></div>' + Array.from({ length: 9 }, (_, i) => slotHTML(i)).join('');
+  document.getElementById('craft').innerHTML = recipesHTML();
+  const b = document.getElementById('benchstat'); b.textContent = nearBench ? '- Crafting Bench nearby' : '- no Crafting Bench nearby'; b.className = nearBench ? 'have' : 'lack';
+}
+function toggleInv(force) {
+  invOpen = force ?? !invOpen; pickSlot = -1; mouse.left = false;
+  document.getElementById('inv').style.display = invOpen ? 'flex' : 'none';
+  nearBench = benchNear(); refreshUI();
+}
+function slotClick(e) {                            // click a slot to pick it up, click another to swap
+  const el = e.target.closest('[data-slot]'); if (!el) return;
+  const i = +el.dataset.slot;
+  if (!invOpen) sel = i;
+  else if (pickSlot < 0) { if (slots[i]) pickSlot = i; }
+  else { [slots[pickSlot], slots[i]] = [slots[i], slots[pickSlot]]; pickSlot = -1; }
+  refreshUI();
+}
+document.getElementById('hotbar').addEventListener('click', slotClick);
+document.getElementById('invgrid').addEventListener('click', slotClick);
+document.getElementById('invgrid').addEventListener('mouseover', e => {
+  const el = e.target.closest('[data-slot]'), k = el && slots[+el.dataset.slot];
+  document.getElementById('invinfo').innerHTML = k ? `<b>${nice(k)}</b> x${inv[k]}<br>${toolInfo(k).join('<br>')}` : '';
+});
+function craftRecipe(r) {                          // returns true if it worked
+  if (!Object.entries(r.cost).every(([k, n]) => (inv[k] || 0) >= n)) { toast('Not enough materials'); return false; }
+  if (needsBench(r) && !nearBench) { toast('You need a Crafting Bench nearby'); return false; }
+  for (const [k, n] of Object.entries(r.cost)) inv[k] -= n;
+  add(r.makes, r.amount); return true;
+}
+// 'mousedown' (not 'click') so the craft still works even if the list redraws while you press
+document.getElementById('craft').addEventListener('mousedown', e => {
+  if (e.button !== 0) return;
+  const row = e.target.closest('.rec[data-i]'); if (!row) return;
+  e.preventDefault(); craftRecipe(RECIPES[row.dataset.i]);
+});
+document.getElementById('craft').addEventListener('toggle', e => {      // remember which groups are open
+  const g = e.target.dataset && e.target.dataset.g; if (!g) return;
+  e.target.open ? openGroups.add(g) : openGroups.delete(g);
+}, true);
+
+// ---------- Mining & placing ----------
+let mining = { x: -1, y: -1, t: 0 };
+const camX = () => player.x * TS - canvas.width / 2, camY = () => (player.y + 0.9) * TS - canvas.height / 2;
+const target = () => ({ x: Math.floor((mouse.x + camX()) / TS), y: Math.floor((mouse.y + camY()) / TS) });
+const inReach = t => Math.hypot(t.x + 0.5 - player.x, t.y + 0.5 - (player.y + 0.9)) <= CONFIG.reach;
+
+function supported(x, y) {                         // is there something for a torch to hang on?
+  return y > heights[x] || [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) => isSolid(x + dx, y + dy));
+}
+function dropUnsupported(x, y) {                   // torches fall off if the block behind them is mined
+  for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+    const nx = x + dx, ny = y + dy, d = BLOCKS[get(nx, ny)];
+    if ((d.needsSupport && !supported(nx, ny)) || (d.needsFloor && !isSolid(nx, ny + 1))) { world[nx][ny] = 'air'; updateLight(nx, ny); add(d.drops); }
+  }
+}
+
+// Can the player 'see' this tile? A straight line from the player to the tile must not pass through solid blocks.
+function canReach(t) {
+  if (!inReach(t)) return false;
+  if (!CONFIG.lineOfSight) return true;
+  const fx = player.x, fy = player.y + 0.9;
+  for (const [ox, oy] of [[.5, .5], [.15, .15], [.85, .15], [.15, .85], [.85, .85]]) {   // aim at the middle and corners of the tile
+    const tx = t.x + ox, ty = t.y + oy, steps = Math.ceil(Math.hypot(tx - fx, ty - fy) / 0.1);
+    let clear = true;
+    for (let i = 0; i < steps && clear; i++) {
+      const bx = Math.floor(fx + (tx - fx) * i / steps), by = Math.floor(fy + (ty - fy) * i / steps);
+      if ((bx !== t.x || by !== t.y) && isSolid(bx, by)) clear = false;    // something is in the way
+    }
+    if (clear) return true;
+  }
+  return false;
+}
+
+function attack() {                                // left-click on an enemy = hit it (returns true if the cursor is on one)
+  if (!mouse.left) return false;
+  const mx = (mouse.x + camX()) / TS, my = (mouse.y + camY()) / TS;
+  const held = heldItem(), wp = held && ITEMS[held].weapon, reach = wp ? 3.5 : 2.5;
+  const target = enemies.find(e => Math.abs(mx - e.x) < e.w / 2 + 0.6 && Math.abs(my - (e.y + e.h / 2)) < e.h / 2 + 0.6);
+  if (!target) return false;
+  if (frame < stats.atkReady) return true;         // still recovering from the last swing
+  if (Math.hypot(target.x - player.x, target.y + target.h / 2 - (player.y + 0.9)) > reach + 1) return false;
+  target.hp -= debug.creative ? 999 : (wp ? wp.damage : CONFIG.fistDamage);
+  target.kx = Math.sign(target.x - player.x) * 0.25; target.flash = 8;
+  stats.atkReady = frame + (wp ? wp.cooldown : 25);
+  useTool(held, 'weapon');
+  return true;
+}
+function mine() {
+  if (attack()) { mining.t = 0; return; }
+  const t = target(), b = get(t.x, t.y), def = BLOCKS[b];
+  if (!mouse.left || b === 'air' || !canReach(t) || def.hardness === Infinity) { mining.t = 0; return; }
+  if (mining.x !== t.x || mining.y !== t.y) mining = { x: t.x, y: t.y, t: 0 };
+  mining.t += debug.creative ? 1e9 : mineSpeed(def) * (player.inLiquid ? CONFIG.liquidMineSlow : 1);
+  if (mining.t >= def.hardness) {
+    world[t.x][t.y] = 'air'; updateLight(t.x, t.y); dropUnsupported(t.x, t.y);
+    useTool(heldItem(), def.chop ? 'axe' : 'tool');
+    if (def.drops && Math.random() < (def.dropChance ?? 1)) add(def.drops);
+    stats.exh += CONFIG.hungerMine;
+    mining.t = 0;
+  }
+}
+function place() {
+  const item = heldItem(), t = target();
+  if (item && ITEMS[item].food) { if (frame >= stats.atkReady) { eat(item); stats.atkReady = frame + 15; } return; }
+  const old = get(t.x, t.y);
+  if (!item || !ITEMS[item].block || (old !== 'air' && !BLOCKS[old].liquid) || !canReach(t)) return;   // can build over liquids
+  const nb = ITEMS[item].block;
+  if (BLOCKS[nb].needsSupport && !supported(t.x, t.y)) return;
+  if (BLOCKS[nb].needsFloor && !isSolid(t.x, t.y + 1)) return;
+  world[t.x][t.y] = nb;
+  if (hits(player.x, player.y)) { world[t.x][t.y] = old; return; }   // don't trap yourself
+  fl[t.x][t.y] = 0; updateLight(t.x, t.y); if (!debug.creative) inv[item]--; refreshUI();
+}
+
+// ---------- Drawing ----------
+let time = 0;
+const lerp = (a, b, t) => Math.round(a + (b - a) * t);
+const weather = { type: 'clear', t: 5400, dim: 0, cloud: 0, rain: 0, flash: 0 };
+function setWeather(type) { weather.type = type; weather.t = CONFIG.weatherMin + Math.random() * (CONFIG.weatherMax - CONFIG.weatherMin); }
+function updateWeather() {
+  if (--weather.t <= 0) { const n = WEATHER[weather.type].next; setWeather(n[Math.floor(Math.random() * n.length)]); }
+  const tg = WEATHER[weather.type];
+  for (const k of ['dim', 'cloud', 'rain']) weather[k] += (tg[k] - weather[k]) * 0.004;          // fades smoothly between weathers
+  if (weather.type === 'storm' && Math.random() < 0.003) weather.flash = 1;                       // lightning
+}
+const mixc = (a, b, t) => a.map((v, i) => Math.round(v + (b[i] - v) * t));
+function drawSky(day, cx, cy) {
+  const alt = Math.max(0, Math.min(1, ((CONFIG.surfaceLevel * TS - (cy + canvas.height / 2)) / TS) / 110));   // 0 = ground level, 1 = high in the sky
+  const grey = Math.min(0.8, weather.dim * 1.6);
+  let top = mixc([90, 170, 235], [140, 160, 245], alt), bot = mixc([165, 215, 245], [255, 224, 240], alt);      // pastel: blue -> lavender / pink haze up high
+  top = mixc(top, [120, 130, 145], grey); bot = mixc(bot, [175, 182, 192], grey);
+  top = mixc([8, 10, 40], top, day); bot = mixc([18, 20, 60], bot, day);
+  const g = ctx.createLinearGradient(0, 0, 0, canvas.height);
+  g.addColorStop(0, `rgb(${top})`); g.addColorStop(1, `rgb(${bot})`);
+  ctx.fillStyle = g; ctx.fillRect(0, 0, canvas.width, canvas.height);
+  if (cy > (CONFIG.surfaceLevel + 40) * TS) return;                // underground: no sky
+  const shade = Math.round(70 + 185 * day * (1 - weather.dim * 1.3));
+  for (const L of CLOUD_LAYERS) {
+    const cellPx = 70 * L.scale * TS, cover = L.cover + weather.cloud * (1 - L.cover);
+    const i0 = Math.floor(cx * L.par / cellPx) - 1, i1 = Math.ceil((cx * L.par + canvas.width) / cellPx) + 1;
+    for (let i = i0; i <= i1; i++) {
+      if (hash(i, L.id) > cover) continue;
+      const px = i * cellPx + hash(i, L.id + 10) * cellPx * 0.6 - cx * L.par;
+      const py = (CONFIG.surfaceLevel + L.ymin + hash(i, L.id + 20) * (L.ymax - L.ymin)) * TS - cy;
+      if (py < -150 || py > canvas.height + 150) continue;
+      ctx.fillStyle = `rgba(${shade},${shade},${Math.min(255, shade + 8)},${L.alpha * (0.5 + 0.5 * Math.max(day, 0.3)) })`;
+      const s = L.size * TS * (0.7 + hash(i, L.id + 30) * 0.6);
+      for (const [ox, oy, r] of [[0, 0, 1], [0.8, 0.15, 0.8], [-0.8, 0.2, 0.75], [0.3, -0.35, 0.7], [-0.3, -0.25, 0.65]]) {
+        ctx.beginPath(); ctx.ellipse(px + ox * s * 0.5, py + oy * s * 0.3, s * 0.5 * r, s * 0.22 * r, 0, 0, 7); ctx.fill();
+      }
+    }
+  }
+}
+const drops = Array.from({ length: 320 }, () => ({ x: Math.random(), y: Math.random(), s: 0.6 + Math.random() * 0.8 }));
+function drawWeather() {
+  if (weather.flash > 0) { ctx.fillStyle = `rgba(255,255,255,${weather.flash * 0.55})`; ctx.fillRect(0, 0, canvas.width, canvas.height); weather.flash -= 0.04; }
+  const px = Math.floor(player.x), py = Math.floor(player.y + 0.9);
+  if (weather.rain < 0.05 || !light[px] || light[px][py] < 0.55 || py > CONFIG.surfaceLevel + 25) return;   // only when you're out in the open
+  const snow = biomeCol[px] === 'snow', n = Math.floor(drops.length * Math.min(1, weather.rain / 1.6 + 0.1) * Math.min(1, weather.rain));
+  if (snow) ctx.fillStyle = 'rgba(255,255,255,.85)'; else { ctx.strokeStyle = 'rgba(170,200,255,.55)'; ctx.lineWidth = 1.2; }
+  for (let i = 0; i < n; i++) {
+    const d = drops[i];
+    d.y += (snow ? 0.004 : 0.03) * d.s; d.x += snow ? Math.sin(frame * 0.02 + i) * 0.0008 : -0.002;
+    if (d.y > 1) { d.y = 0; d.x = Math.random(); } if (d.x < 0) d.x += 1;
+    const sx = d.x * canvas.width, sy = d.y * canvas.height;
+    if (snow) ctx.fillRect(sx, sy, 3, 3); else { ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(sx - 3, sy + 13); ctx.stroke(); }
+  }
+}
+function draw() {
+  const day = CONFIG.dayNightCycle ? Math.max(0, Math.min(1, 0.5 + 0.8 * Math.cos((time / CONFIG.dayLength) * Math.PI * 2))) : 1;   // 0 = night, 1 = day (game starts at noon)
+  const cx = camX(), cy = camY();
+  drawSky(day, cx, cy);
+  const x0 = Math.floor(cx / TS), x1 = Math.ceil((cx + canvas.width) / TS);
+  const y0 = Math.max(0, Math.floor(cy / TS)), y1 = Math.min(H - 1, Math.ceil((cy + canvas.height) / TS));
+  dayNow = day;
+  const held = heldItem(), holdingLight = held && ITEMS[held].heldLight;      // holding a torch = see farther
+  const lightR = holdingLight || CONFIG.playerLight, lightS = holdingLight ? 0.9 : 0.7;
+  const dayLight = (CONFIG.nightBrightness + (1 - CONFIG.nightBrightness) * day) * (1 - weather.dim);              // sunlight is dimmer at night
+  for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) {
+    if (!world[x]) continue;
+    const name = world[x][y], def = BLOCKS[name], col = def.color, depth = y - heights[x];
+    const px = Math.round(x * TS - cx), py = Math.round(y * TS - cy);
+    if (depth > 0) { ctx.fillStyle = wallColor(x, y, depth); ctx.fillRect(px, py, TS, TS); }   // cave background
+    if (col) {
+      if (def.shape === 'torch') {                   // torch: stick + flickering flame
+        ctx.fillStyle = '#8b5a2b'; ctx.fillRect(px + TS * .43, py + TS * .4, TS * .14, TS * .55);
+        ctx.fillStyle = (frame + x) % 12 < 6 ? '#ffb300' : '#ff7a00'; ctx.fillRect(px + TS * .35, py + TS * .15, TS * .3, TS * .32);
+      } else if (def.shape === 'bench') {            // crafting bench: tabletop + legs
+        ctx.fillStyle = '#6d4c2a'; ctx.fillRect(px + TS * .12, py + TS * .55, TS * .12, TS * .45); ctx.fillRect(px + TS * .76, py + TS * .55, TS * .12, TS * .45);
+        ctx.fillStyle = col; ctx.fillRect(px, py + TS * .38, TS, TS * .2);
+        ctx.fillStyle = '#8d6e63'; ctx.fillRect(px + TS * .25, py + TS * .2, TS * .5, TS * .18);
+      } else if (def.liquid) {                       // liquids: full or half blocks
+        const full = fl[x][y] >= CONFIG.halfFlowBelow || (y > 0 && BLOCKS[world[x][y - 1]].liquid), hh = full ? TS : Math.round(TS / 2);   // full or half blocks only
+        ctx.fillStyle = col; ctx.fillRect(px, py + TS - hh, TS, hh);
+      } else if (def.ore) {                          // ores: stone with colored speckles
+        ctx.fillStyle = BLOCKS[depth > CONFIG.deepStoneDepth ? 'deepstone' : 'stone'].color; ctx.fillRect(px, py, TS, TS);
+        ctx.fillStyle = col;
+        for (const [ox, oy] of [[.15, .2], [.55, .12], [.3, .55], [.65, .6]]) ctx.fillRect(px + ox * TS, py + oy * TS, TS * .26, TS * .26);
+      } else { ctx.fillStyle = col; ctx.fillRect(px, py, TS, TS); }
+      if (!def.liquid && !def.shape) { ctx.fillStyle = 'rgba(0,0,0,.18)'; ctx.fillRect(px, py + TS - 2, TS, 2); ctx.fillRect(px + TS - 2, py, 2, TS); }
+    } else if (depth <= 0) continue;                 // open sky: nothing to shade
+    // brightness: sunlight that reaches this tile, dimmer the deeper you are
+    let br = light[x][y] * dayLight * (1 - Math.min(CONFIG.depthDarkness, Math.max(0, depth) / CONFIG.darkDepth));
+    br = Math.max(br, glow[x][y]);                   // torch & lava light
+    if (lightR > 0) br = Math.max(br, (1 - Math.hypot(x + .5 - player.x, y + .5 - player.y - .9) / lightR) * lightS);
+    if (def.emit) br = Math.max(br, 0.9);            // glowing blocks always look bright
+    br = Math.max(br, CONFIG.minLight);
+    if (depth < -12) br = Math.max(br, dayLight * 0.95);       // high in the sky: bright and airy
+    if (br < 1) { ctx.fillStyle = `rgba(0,0,10,${1 - br})`; ctx.fillRect(px, py, TS, TS); }
+  }
+  for (const isl of islands) {                     // soft haze around sky islands
+    const hx = isl.x * TS - cx, hy = isl.y * TS - cy, r = (isl.w + 8) * TS;
+    if (hx < -r || hx > canvas.width + r || hy < -r || hy > canvas.height + r) continue;
+    const g = ctx.createRadialGradient(hx, hy, r * 0.15, hx, hy, r);
+    const a = 0.2 * (0.4 + 0.6 * day); g.addColorStop(0, `rgba(${isl.haze},${a})`); g.addColorStop(1, `rgba(${isl.haze},0)`);
+    ctx.fillStyle = g; ctx.fillRect(hx - r, hy - r, r * 2, r * 2);
+  }
+  drawEnemies(cx, cy);
+  // player
+  const p = player;
+  ctx.fillStyle = '#e53935'; ctx.fillRect(p.x * TS - cx - p.w * TS / 2, p.y * TS - cy, p.w * TS, p.h * TS);
+  ctx.fillStyle = '#ffcc99'; ctx.fillRect(p.x * TS - cx - p.w * TS / 2, p.y * TS - cy, p.w * TS, TS * 0.6);
+  if (holdingLight) {                              // torch in hand
+    const hx = p.x * TS - cx + (p.face || 1) * TS * .5, hy = p.y * TS - cy + TS * .9;
+    ctx.fillStyle = '#8b5a2b'; ctx.fillRect(hx - 2, hy, 4, TS * .5);
+    ctx.fillStyle = frame % 10 < 5 ? '#ffb300' : '#ff7a00'; ctx.fillRect(hx - 3, hy - 7, 6, 9);
+  }
+  // block cursor + crack bar
+  const t = target();
+  if (inReach(t)) {
+    ctx.strokeStyle = canReach(t) ? '#fff' : '#f44'; ctx.lineWidth = 2;   // red = something is blocking you
+    ctx.strokeRect(t.x * TS - cx, t.y * TS - cy, TS, TS);
+    if (mining.t > 0 && mining.x === t.x && mining.y === t.y) {
+      ctx.fillStyle = 'rgba(0,0,0,.6)'; ctx.fillRect(t.x * TS - cx, t.y * TS - cy, TS, TS * Math.min(1, mining.t / BLOCKS[get(t.x, t.y)].hardness));
+    }
+  }
+}
+
+// ---------- Enemies ----------
+const enemies = [];
+let dayNow = 1;
+const liquidAt = (x, y) => BLOCKS[get(x, y)].liquid;
+function boxHits(cx, ty, w, h, avoidLiquid) {        // does a box (center x, top y) overlap solid blocks (or liquid)?
+  for (let tx = Math.floor(cx - w / 2); tx <= Math.floor(cx + w / 2 - 0.001); tx++)
+    for (let y = Math.floor(ty); y <= Math.floor(ty + h - 0.001); y++) if (isSolid(tx, y) || (avoidLiquid && liquidAt(tx, y))) return true;
+  return false;
+}
+const tintColor = (hex, t) => { const n = parseInt(hex.slice(1), 16), c = v => Math.max(0, Math.min(255, v + t)); return `rgb(${c(n >> 16)},${c((n >> 8) & 255)},${c(n & 255)})`; };
+function makeEnemy(type, x, y, forceElite) {         // x, y = the block it appears in
+  const d = ENEMIES[type], depth = Math.max(0, y - (heights[Math.floor(x)] ?? y));
+  const elite = d.hostile !== false && (forceElite ?? Math.random() < ELITE.chance);
+  const size = (0.85 + Math.random() * 0.35) * (elite ? ELITE.size : 1), tough = 1 + depth / CONFIG.enemyDepthScale;   // every enemy is a little different
+  const hp = Math.round(d.hp * size * tough * (elite ? ELITE.hp : 1)), w = d.w * size, h = d.h * size;
+  const onFloor = d.ai === 'crawl' || d.ai === 'hop';
+  return { type, x, y: onFloor ? y + 1 - h : y + 0.5 - h / 2, w, h, size, elite, hp, maxHp: hp,
+    dmg: Math.round(d.damage * Math.sqrt(size) * Math.sqrt(tough) * (elite ? ELITE.damage : 1)),
+    vx: 0, vy: 0, kx: 0, seed: Math.random() * 10, flash: 0, face: 1, onGround: false, hitX: false, hitY: false, digT: 0, cd: 0, tint: Math.floor(Math.random() * 50 - 25) };
+}
+function spawnEnemy() {
+  const hostile = enemies.filter(e => ENEMIES[e.type].hostile !== false).length, passive = enemies.length - hostile;
+  const pdepth = player.y - heights[Math.floor(player.x)];
+  for (const type of Object.keys(ENEMIES).sort(() => Math.random() - 0.5)) {
+    const d = ENEMIES[type];
+    if (d.hostile === false ? passive >= SPAWN.maxPassive : hostile >= SPAWN.maxEnemies) continue;
+    if (d.sky && pdepth > -8) continue;               // sky enemies only appear when you're up in the sky
+    for (let tries = 0; tries < 12; tries++) {
+      const ang = Math.random() * 6.283, r = SPAWN.minDist + Math.random() * (SPAWN.maxDist - SPAWN.minDist);
+      const x = Math.floor(player.x + Math.cos(ang) * r), y = Math.floor(player.y + Math.sin(ang) * r);
+      if (y < 2 || y > H - 3 || !world[x]) continue;
+      const depth = y - heights[x], b = get(x, y);
+      let ok = false;
+      if (d.ai === 'swim') ok = b === 'water' && (!d.ocean || biomeCol[x] === 'ocean');
+      else if (d.ai === 'dig') ok = isSolid(x, y) && depth > d.minDepth && BLOCKS[b].hardness !== Infinity;
+      else if (b === 'air') {
+        if (d.sky) ok = depth <= -12;
+        else if (d.ai === 'fly') ok = depth > d.minDepth || (d.night && dayNow < 0.35 && depth <= 0);
+        else ok = depth > d.minDepth && isSolid(x, y + 1) && !liquidAt(x, y + 1);
+      }
+      if (!ok) continue;
+      enemies.push(makeEnemy(type, x + 0.5, y));
+      return;
+    }
+  }
+}
+function spawnForced(type, elite) {                // used by the debug menu
+  const d = ENEMIES[type];
+  let x = player.x + (Math.random() < 0.5 ? -5 : 5), y = player.y;
+  if (d.ai === 'swim') for (let i = 0; i < 400; i++) {   // look for water nearby
+    const wx = Math.floor(player.x + (Math.random() - 0.5) * 60), wy = Math.floor(player.y + (Math.random() - 0.5) * 40);
+    if (get(wx, wy) === 'water') { x = wx + 0.5; y = wy; break; }
+  }
+  y = Math.floor(y);
+  if (d.ai !== 'swim' && d.ai !== 'dig') for (let k = 0; k < 60 && (isSolid(Math.floor(x), y) || isSolid(Math.floor(x), y - 1) || liquidAt(Math.floor(x), y)); k++) y--;   // don't appear inside rock or water
+  enemies.push(makeEnemy(type, x, y, elite));
+}
+function moveEnemy(e, mx, my, avoidLiquid = true) { // move with wall collisions (and no walking into water), one axis at a time
+  e.hitX = e.hitY = false;
+  if (boxHits(e.x + mx, e.y, e.w, e.h, avoidLiquid)) e.hitX = true; else e.x += mx;
+  if (boxHits(e.x, e.y + my, e.w, e.h, avoidLiquid)) e.hitY = true; else e.y += my;
+}
+function dropLoot(e, d) {
+  for (const [item, [lo, hi]] of Object.entries(d.drops || {})) { let n = lo + Math.floor(Math.random() * (hi - lo + 1)); if (e.elite) n = n * 2 + 1; if (n) add(item, n); }
+  if (e.elite) {
+    const depth = Math.max(0, e.y - heights[Math.floor(e.x)]), pool = ELITE.loot.filter(l => depth >= l.minDepth);
+    for (let i = 0; i < ELITE.rolls; i++) { const l = pool[Math.floor(Math.random() * pool.length)]; add(l.item, l.min + Math.floor(Math.random() * (l.max - l.min + 1))); }
+    toast('Elite defeated! Extra loot!');
+  }
+}
+function updateEnemies() {
+  if (frame % SPAWN.every === 0 && Math.random() < SPAWN.chance) spawnEnemy();
+  const p = player, pcx = p.x, pcy = p.y + 0.9;
+  for (let i = enemies.length - 1; i >= 0; i--) {
+    const e = enemies[i], d = ENEMIES[e.type];
+    const dx = pcx - e.x, dy = pcy - (e.y + e.h / 2), dist = Math.hypot(dx, dy) || 1, sp = d.speed;
+    const near = dist < SPAWN.aggroDist && d.hostile !== false;
+    if (e.hp <= 0) { dropLoot(e, d); enemies.splice(i, 1); continue; }
+    if (dist > SPAWN.despawnDist) { enemies.splice(i, 1); continue; }
+    e.flash = Math.max(0, e.flash - 1); e.kx *= 0.85;
+    if (d.ai === 'fly') {                          // bat / harpy: flies at you, wobbling
+      const mx = near ? dx / dist * sp : Math.cos(frame * 0.03 + e.seed) * sp * 0.5;
+      moveEnemy(e, mx + e.kx, (near ? dy / dist * sp : 0) + Math.sin(frame * 0.12 + e.seed) * 0.02);
+      e.face = Math.sign(mx) || e.face;
+    } else if (d.ai === 'crawl') {                 // spider: walks and climbs walls
+      e.vy = Math.min(e.vy + CONFIG.gravity, 0.5);
+      const mx = near ? Math.sign(dx) * sp : 0;
+      if (e.hitX && near) e.vy = -sp * 1.8;
+      else if (e.onGround && near && dy < -1.5 && Math.random() < 0.02) e.vy = -0.38;
+      moveEnemy(e, mx + e.kx, e.vy);
+      if (e.hitY) { e.onGround = e.vy > 0; e.vy = 0; } else e.onGround = false;
+      e.face = Math.sign(mx) || e.face;
+    } else if (d.ai === 'hop') {                   // slime: hops toward you
+      e.vy = Math.min(e.vy + CONFIG.gravity, 0.5);
+      if (e.onGround) { e.vx = 0; if (--e.cd <= 0 && near) { e.vy = -0.33; e.vx = Math.sign(dx) * sp * 2.2; e.cd = 40 + Math.random() * 40; } }
+      moveEnemy(e, e.vx + e.kx, e.vy);
+      if (e.hitY) { e.onGround = e.vy > 0; e.vy = 0; } else e.onGround = false;
+      if (e.hitX) e.vx = 0;
+      e.face = Math.sign(e.vx) || e.face;
+    } else if (d.ai === 'dig') {                   // digger: can't walk through rock - it has to dig each block out
+      const ux = near ? dx / dist : 0, uy = near ? dy / dist : 0;
+      moveEnemy(e, ux * sp + e.kx, uy * sp);
+      e.face = Math.sign(dx) || e.face;
+      if ((e.hitX || e.hitY) && near) {
+        const tx = Math.floor(e.hitX ? e.x + Math.sign(dx) * (e.w / 2 + 0.12) : e.x), ty = Math.floor(e.hitX ? e.y + e.h / 2 : e.y + (dy > 0 ? e.h + 0.12 : -0.12));
+        const b = get(tx, ty);
+        if (isSolid(tx, ty) && BLOCKS[b].hardness !== Infinity) {
+          if (++e.digT >= Math.max(10, BLOCKS[b].hardness / 2.5)) { world[tx][ty] = 'air'; dropUnsupported(tx, ty); updateLight(tx, ty); e.digT = 0; }
+        } else e.digT = 0;
+      } else e.digT = 0;
+    } else if (d.ai === 'swim') {                  // piranha / jellyfish / fish: stays in water
+      const inW = (x, y) => get(Math.floor(x), Math.floor(y)) === 'water';
+      let mx, my;
+      if (near && inW(pcx, pcy)) { mx = dx / dist * sp; my = dy / dist * sp; }
+      else { mx = Math.cos(e.seed + frame * 0.01) * sp * 0.6; my = Math.sin(e.seed * 2 + frame * 0.013) * sp * 0.4; }
+      mx += e.kx;
+      if (inW(e.x + mx + Math.sign(mx) * e.w / 2, e.y + e.h / 2) && !isSolid(Math.floor(e.x + mx), Math.floor(e.y + e.h / 2))) e.x += mx; else e.seed += 1.7;
+      if (inW(e.x, e.y + e.h / 2 + my + Math.sign(my) * e.h / 2) && !isSolid(Math.floor(e.x), Math.floor(e.y + e.h / 2 + my))) e.y += my;
+      if (!inW(e.x, e.y + e.h / 2)) e.hp -= 0.15;  // stranded out of water
+      e.face = Math.sign(mx) || e.face;
+    }
+    if (d.hostile !== false && Math.abs(dx) < e.w / 2 + p.w / 2 && Math.abs(dy) < e.h / 2 + p.h / 2 && frame >= stats.hurtUntil) {   // touching you
+      damage(e.dmg); stats.hurtUntil = frame + 50;
+      p.kx = Math.sign(dx || 1) * 0.22; p.vy = -0.2; e.kx = -Math.sign(dx || 1) * 0.12;
+    }
+  }
+}
+function drawEnemies(cx, cy) {
+  for (const e of enemies) {
+    const d = ENEMIES[e.type], px = e.x * TS - cx, py = e.y * TS - cy, w = e.w * TS, h = e.h * TS, f = e.face, look = d.look || d.ai;
+    if (px < -80 || px > canvas.width + 80 || py < -80 || py > canvas.height + 80) continue;
+    ctx.fillStyle = ctx.strokeStyle = e.flash > 0 ? '#fff' : tintColor(d.color, e.tint);
+    if (e.elite) { ctx.save(); ctx.strokeStyle = '#ffd54a'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(px, py + h / 2, Math.max(w, h) * 0.75, 0, 7); ctx.stroke(); ctx.restore(); }
+    if (look === 'fly') {
+      const flap = Math.sin(frame * 0.5) * h * 0.6;
+      for (const s of [-1, 1]) { ctx.beginPath(); ctx.moveTo(px, py + h / 2); ctx.lineTo(px + s * w * 0.9, py + h / 2 - flap); ctx.lineTo(px + s * w * 0.3, py + h); ctx.fill(); }
+      ctx.beginPath(); ctx.ellipse(px, py + h / 2, w * 0.28, h * 0.42, 0, 0, 7); ctx.fill();
+    } else if (look === 'crawl') {
+      ctx.lineWidth = 2;
+      for (const s of [-1, 1]) for (let k = 0; k < 4; k++) { ctx.beginPath(); ctx.moveTo(px + s * w * 0.15, py + h * 0.5); ctx.lineTo(px + s * w * (0.35 + k * 0.1), py + h * (0.1 + k * 0.28) + Math.sin(frame * 0.3 + k) * 2); ctx.stroke(); }
+      ctx.beginPath(); ctx.ellipse(px, py + h * 0.55, w * 0.32, h * 0.4, 0, 0, 7); ctx.fill();
+    } else if (look === 'hop') {
+      const sq = e.onGround ? 1 : 1.2;
+      ctx.beginPath(); ctx.ellipse(px, py + h * 0.6, w * 0.5 / sq, h * 0.4 * sq, 0, Math.PI, 0); ctx.lineTo(px + w * 0.5 / sq, py + h); ctx.lineTo(px - w * 0.5 / sq, py + h); ctx.fill();
+    } else if (look === 'dig') {
+      ctx.fillRect(px - w / 2, py, w, h);
+      ctx.fillStyle = e.flash > 0 ? '#fff' : '#cfd8dc'; ctx.beginPath(); ctx.moveTo(px + f * w / 2, py + h * 0.15); ctx.lineTo(px + f * w * 1.0, py + h / 2); ctx.lineTo(px + f * w / 2, py + h * 0.85); ctx.fill();
+    } else if (look === 'jelly') {
+      ctx.beginPath(); ctx.arc(px, py + h * 0.4, w * 0.45, Math.PI, 0); ctx.fill();
+      ctx.lineWidth = 2; for (let k = -1; k <= 1; k++) { ctx.beginPath(); ctx.moveTo(px + k * w * 0.25, py + h * 0.4); ctx.lineTo(px + k * w * 0.25 + Math.sin(frame * 0.15 + k) * 3, py + h); ctx.stroke(); }
+    } else {                                       // swim
+      ctx.beginPath(); ctx.ellipse(px, py + h / 2, w * 0.4, h * 0.45, 0, 0, 7); ctx.fill();
+      ctx.beginPath(); ctx.moveTo(px - f * w * 0.3, py + h / 2); ctx.lineTo(px - f * w * 0.7, py); ctx.lineTo(px - f * w * 0.7, py + h); ctx.fill();
+    }
+    ctx.fillStyle = d.hostile === false ? '#111' : '#f33'; ctx.fillRect(px + f * w * 0.15 - 2, py + h * 0.3, 4, 4);
+    if (e.hp < e.maxHp || e.elite) { ctx.fillStyle = '#000'; ctx.fillRect(px - 15, py - 9, 30, 5); ctx.fillStyle = e.elite ? '#ffd54a' : '#e53935'; ctx.fillRect(px - 14, py - 8, 28 * Math.max(0, e.hp / e.maxHp), 3); }
+  }
+}
+
+// ---------- Debug menu (press ` to open) ----------
+const debug = { creative: false, fly: false, noclip: false };
+
+// Sliders in the menu. To add one, add a line: key = name in CONFIG, plus min / max / step.
+// (apply = optional code to run when the value changes)
+const DEBUG_SLIDERS = [
+  { key: 'moveSpeed',       label: 'Walk speed',        min: 0.05, max: 0.6,  step: 0.01 },
+  { key: 'sprintSpeed',     label: 'Sprint multiplier', min: 1,    max: 4,    step: 0.1 },
+  { key: 'jumpPower',       label: 'Jump power',        min: 0.2,  max: 1,    step: 0.01 },
+  { key: 'gravity',         label: 'Gravity',           min: 0,    max: 0.1,  step: 0.005 },
+  { key: 'reach',           label: 'Reach (blocks)',    min: 2,    max: 40,   step: 1 },
+  { key: 'dayLength',       label: 'Day length (sec)',  min: 20,   max: 1200, step: 10 },
+  { key: 'nightBrightness', label: 'Night brightness',  min: 0,    max: 1,    step: 0.05 },
+  { key: 'playerLight',     label: 'Player glow radius',min: 0,    max: 30,   step: 1 },
+  { key: 'minLight',        label: 'Darkest light',     min: 0,    max: 0.5,  step: 0.01 },
+  { key: 'flowEvery',       label: 'Water speed (frames per step, lower = faster)', min: 1, max: 30, step: 1 },
+  { key: 'lavaFlowEvery',   label: 'Lava slowness (x slower than water)', min: 1, max: 10, step: 1 },
+  { key: 'tileSize',        label: 'Zoom (tile size)',  min: 12,   max: 56,   step: 2, apply: v => TS = v },
+];
+// On/off switches for CONFIG values
+const DEBUG_TOGGLES = [
+  { key: 'lineOfSight',   label: 'Line-of-sight mining' },
+  { key: 'dayNightCycle', label: 'Day/night cycle' },
+];
+
+const dbgEl = document.createElement('div'); dbgEl.id = 'debug'; document.body.appendChild(dbgEl);
+let dbgOpen = false;
+function toggleDebug() { dbgOpen = !dbgOpen; dbgEl.style.display = dbgOpen ? 'block' : 'none'; if (dbgOpen) buildDebug(); }
+function buildDebug() {
+  const row = h => `<div class="drow">${h}</div>`;
+  let h = '<b>Debug menu</b> <small>(` to close)</small><div id="dinfo"></div><h4>Modes</h4>';
+  for (const [k, label] of [['creative', 'Creative (infinite blocks, instant mining, god mode)'], ['fly', 'Fly (W/Space up, S down)'], ['noclip', 'Noclip (fly through walls)']])
+    h += row(`<label><input type="checkbox" data-dbg="${k}" ${debug[k] ? 'checked' : ''}> ${label}</label>`);
+  for (const t of DEBUG_TOGGLES) h += row(`<label><input type="checkbox" data-cfg="${t.key}" ${CONFIG[t.key] ? 'checked' : ''}> ${t.label}</label>`);
+  h += '<h4>Items</h4>' + row(`<select id="dgive">${Object.keys(ITEMS).map(k => `<option>${k}</option>`).join('')}</select> <input id="dqty" type="number" value="64" min="1" style="width:56px"> <button data-act="give">Give</button>`);
+  h += row('<button data-act="all">Give 999 of everything</button> <button data-act="clear">Clear inventory</button>');
+  h += '<h4>Actions</h4>' + row('<button data-act="heal">Heal</button><button data-act="spawn">Go to spawn</button><button data-act="noon">Set noon</button><button data-act="midnight">Set midnight</button><button data-act="newworld">New world</button>') + row('Enemies: ' + Object.keys(ENEMIES).map(k => `<button data-act="spawn_${k}">${k}</button>`).join('') + '<button data-act="killall">Kill all</button>') + row('Elites: ' + Object.keys(ENEMIES).filter(k => ENEMIES[k].hostile !== false).map(k => `<button data-act="elite_${k}">${k}</button>`).join('')) + row('Weather: ' + Object.keys(WEATHER).map(k => `<button data-act="wx_${k}">${k}</button>`).join(''));
+  h += '<h4>Settings</h4>';
+  for (const d of DEBUG_SLIDERS) h += row(`${d.label}: <b id="v_${d.key}">${CONFIG[d.key]}</b><br><input type="range" data-slider="${d.key}" min="${d.min}" max="${d.max}" step="${d.step}" value="${CONFIG[d.key]}">`);
+  dbgEl.innerHTML = h;
+}
+dbgEl.addEventListener('input', e => {
+  const t = e.target;
+  if (t.dataset.slider) {
+    const d = DEBUG_SLIDERS.find(d => d.key === t.dataset.slider), v = +t.value;
+    CONFIG[d.key] = v; if (d.apply) d.apply(v); document.getElementById('v_' + d.key).textContent = v;
+  } else if (t.dataset.dbg) { debug[t.dataset.dbg] = t.checked; if (t.dataset.dbg === 'noclip' && t.checked) debug.fly = true; }
+  else if (t.dataset.cfg) CONFIG[t.dataset.cfg] = t.checked;
+});
+dbgEl.addEventListener('change', e => { if (e.target.type !== 'number') e.target.blur(); });
+addEventListener('click', e => { if (e.target.tagName === 'BUTTON') e.target.blur(); });   // so Space doesn't re-press a button
+dbgEl.addEventListener('click', e => {
+  const act = e.target.dataset.act; if (!act) return;
+  if (act === 'give') add(document.getElementById('dgive').value, Math.max(1, +document.getElementById('dqty').value || 1));
+  if (act === 'all') { for (const k of Object.keys(ITEMS)) inv[k] = (inv[k] || 0) + 999; refreshUI(); }
+  if (act === 'clear') { for (const k of Object.keys(ITEMS)) inv[k] = 0; refreshUI(); }
+  if (act === 'heal') { stats.health = CONFIG.maxHealth; stats.stamina = CONFIG.maxStamina; stats.oxygen = CONFIG.maxOxygen; stats.hunger = CONFIG.maxHunger; stats.exhausted = false; }
+  if (act === 'spawn') Object.assign(player, { x: spawn.x, y: spawn.y, vx: 0, vy: 0, peakY: spawn.y });
+  if (act === 'noon') timeOffset += 0 - (time % CONFIG.dayLength);
+  if (act === 'midnight') timeOffset += CONFIG.dayLength / 2 - (time % CONFIG.dayLength);
+  if (act === 'newworld') newWorld();
+  if (act.startsWith('spawn_')) spawnForced(act.slice(6));
+  if (act === 'killall') enemies.length = 0;
+  if (act.startsWith('elite_')) spawnForced(act.slice(6), true);
+  if (act.startsWith('wx_')) setWeather(act.slice(3));
+});
+function newWorld() {                              // makes a brand new random world
+  for (let i = 0; i < ph.length; i++) ph[i] = rnd(0, 9);
+  seed = Math.random() * 1e4;
+  for (const t of [world, heights, biomeCol, ubc, light, glow, skyTop, fl]) for (const k in t) delete t[k];
+  chunks.clear(); ensureChunks(0, true);
+  spawn.x = 0.5; spawn.y = heights[0] - 3; enemies.length = 0; islands.length = 0; islandSeen.clear();
+  Object.assign(player, { x: spawn.x, y: spawn.y, vx: 0, vy: 0, peakY: spawn.y });
+}
+let fpsAvg = 60, lastNow = performance.now();
+function updateDebugInfo() {
+  const now = performance.now(); fpsAvg += (1000 / Math.max(1, now - lastNow) - fpsAvg) * 0.05; lastNow = now;
+  if (!dbgOpen || frame % 10) return;
+  document.getElementById('dinfo').textContent = `x ${player.x.toFixed(1)}  y ${player.y.toFixed(1)}  depth ${Math.round(player.y - heights[Math.floor(player.x)])}  fps ${Math.round(fpsAvg)}`;
+}
+
+// ---------- Main loop ----------
+const t0 = performance.now();
+let timeOffset = 0;
+function loop() { time = (performance.now() - t0) / 1000 + timeOffset; frame++; ensureChunks(player.x);
+  if (frame % 15 === 0) { const nb = benchNear(); if (nb !== nearBench) { nearBench = nb; if (invOpen) refreshUI(); } }
+  if (!invOpen) { updatePlayer(); updateHealth(); updateHunger(); updateWeather(); updateLiquids(); updateEnemies(); mine(); }   // the game pauses while the inventory is open
+  draw(); drawWeather(); drawHud(); updateDebugInfo(); requestAnimationFrame(loop); }
+refreshUI(); loop();
+</script>
+</body>
+</html>
